@@ -5,3 +5,6 @@ bin:
 
 bin/helpmakego: bin
 	go build  -o $@
+
+lint:
+	golangci-lint run

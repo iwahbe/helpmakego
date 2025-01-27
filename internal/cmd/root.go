@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/iwahbe/helpmakego/internal/pkg/display"
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
@@ -34,7 +35,7 @@ func Root() *cobra.Command {
 
 			modRoot, err := filepath.Abs(modRoot)
 			if err != nil {
-				return nil
+				return err
 			}
 
 			switch os.Getenv("LOG") {
@@ -51,12 +52,18 @@ func Root() *cobra.Command {
 				slog.WarnContext(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
 			}
 
-			f, err := modulefiles.Find(ctx, modRoot, true /* include test files */)
+			paths, err := modulefiles.Find(ctx, modRoot, true /* include test files */)
 			if err != nil {
 				return err
 			}
 
-			_, err = fmt.Printf("%s\n", strings.Join(f, " "))
+			if cwd, err := os.Getwd(); err == nil {
+				paths = display.MakeRelative(ctx, cwd, paths)
+			} else {
+				slog.WarnContext(ctx, "os.Getwd() failed - displaying absolute paths")
+			}
+
+			_, err = fmt.Printf("%s\n", strings.Join(paths, " "))
 			return err
 		},
 	}

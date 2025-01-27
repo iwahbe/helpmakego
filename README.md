@@ -14,7 +14,11 @@
 - [ ] Validate with a complicated Pulumi package (like pulumi/pulumi-aws)
 - [ ] Add a `--test` flag, to also include test files
   - [ ] Validate that the test flags work as expected
+- [ ] Account for `go.work` in dependency resolution
+- [x] Include `go.mod` and `go.sum`
 
 ### After Release
 
 - [ ] Add CI
+  - [ ] Run tests
+  - [ ] Run linter

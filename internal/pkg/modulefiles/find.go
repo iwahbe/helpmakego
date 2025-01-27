@@ -18,6 +18,7 @@ import (
 	"golang.org/x/mod/modfile"
 )
 
+// Find the set of files that are depended on by the package at root.
 func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 	var errs []error
 
@@ -26,7 +27,23 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		return nil, fmt.Errorf("Go modules disabled")
 	}
 
-	for pkg, err := range findPackages(ctx, root, testPaths) {
+	goModDir, goMod, err := findGoMod(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to discover Go module: %w", err)
+	}
+
+	{ // Add go.{mod,sum}
+		goModPath := filepath.Join(goModDir, "go.mod")
+		goSumPath := filepath.Join(goModDir, "go.sum")
+		files[goModPath] = struct{}{} // goModPath must exist, since findGoMod returned without an error
+		if _, err := os.Stat(goSumPath); err == nil {
+			files[goSumPath] = struct{}{}
+		} else if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("could not check if go.sum exists: %w", err)
+		}
+	}
+
+	for pkg, err := range findPackages(ctx, goMod, goModDir, root, testPaths) {
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -40,15 +57,7 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		}
 
 		for _, file := range pkgFiles {
-			file = filepath.Join(pkg.Dir, file)
-			if f, err := filepath.Rel(root, file); err != nil {
-				slog.WarnContext(ctx, "Unable to get relative path",
-					slog.String("basepath", root),
-					slog.String("targetpath", file))
-			} else {
-				file = f
-			}
-			files[file] = struct{}{}
+			files[filepath.Join(pkg.Dir, file)] = struct{}{}
 		}
 	}
 
@@ -58,18 +67,10 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 	}
 	slices.Sort(sortedFiles)
 	return sortedFiles, errors.Join(errs...)
-
 }
 
-func findPackages(ctx context.Context, root string, includeTests bool) iter.Seq2[*build.Package, error] {
-
-	retErr := func(err error) iter.Seq2[*build.Package, error] {
-		return func(yield func(*build.Package, error) bool) {
-			yield(nil, err)
-		}
-	}
-
-	// Find the go.mod
+func findGoMod(ctx context.Context, root string) (string, *modfile.File, error) {
+	slog.DebugContext(ctx, "Searching for go.mod", slog.String("root", root))
 	goModDir := root
 	var goModBytes []byte
 	for {
@@ -79,18 +80,22 @@ func findPackages(ctx context.Context, root string, includeTests bool) iter.Seq2
 		} else if os.IsNotExist(err) {
 			goModDir = filepath.Dir(goModDir)
 			if goModDir == string(filepath.Separator) {
-				retErr(errors.New("no go.mod file found"))
+				return "", nil, errors.New("no go.mod file found")
 			}
 		} else {
-			retErr(err) // Surface the error, and return
+			return "", nil, err
 		}
 	}
 
 	goMod, err := modfile.Parse("go.mod", goModBytes, nil)
 	if err != nil {
-		return retErr(fmt.Errorf("could not parse %s: %w", filepath.Join(goModDir, "go.mod"), err))
+		return "", nil, fmt.Errorf("could not parse %s: %w", filepath.Join(goModDir, "go.mod"), err)
 	}
+	return goModDir, goMod, nil
+}
 
+func findPackages(ctx context.Context, goMod *modfile.File, goModRoot, root string, includeTests bool) iter.Seq2[*build.Package, error] {
+	// Find the go.mod
 	replaces := make(map[string]string, len(goMod.Replace))
 	for _, r := range goMod.Replace {
 		// We only follow local replaces
@@ -102,7 +107,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) iter.Seq2
 
 	finder := packageFinder{
 		moduleName:    goMod.Module.Mod.Path,
-		moduleRootDir: goModDir,
+		moduleRootDir: goModRoot,
 		replaces:      replaces,
 		includeTests:  includeTests,
 		ctx:           ctx,
@@ -141,10 +146,10 @@ func (pf *packageFinder) findPackages(target string) func(yield func(*build.Pack
 			pf.seen[_import] = struct{}{}
 			rest, isInModule := strings.CutPrefix(_import, pf.moduleName)
 			if !isInModule {
-				if r, ok := pf.fromReplace(_import); ok {
+				if replaceTarget, ok := pf.fromReplace(_import); ok {
 					slog.DebugContext(pf.ctx, "Replacing import",
-						slog.String("from", _import), slog.String("to", r))
-					_import = r
+						slog.String("from", _import), slog.String("to", replaceTarget))
+					pf.findPackages(replaceTarget)(yield)
 				} else {
 					slog.DebugContext(pf.ctx, "Skipping foreign import", slog.String("module", _import))
 					return
