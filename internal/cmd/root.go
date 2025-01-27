@@ -15,7 +15,7 @@ import (
 
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "helpmakego [path-to-module]",
+		Use:          "helpmakego [path-to-module] [--test]",
 		Short:        "Find all files a Go module depends on - suitable for Make",
 		SilenceUsage: true,
 		Args:         cobra.MaximumNArgs(1),

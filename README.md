@@ -16,6 +16,9 @@
 - [ ] Validate that the test flags work as expected
 - [ ] Account for `go.work` in dependency resolution
 - [x] Include `go.mod` and `go.sum`
+- [ ] Add a test for `replace`.
+  - [ ] Ensure that this works as expected for nested `go.mod` files
+  - [ ] Ensure that this works as expected for non-nested `go.mod` files
 
 ### After Release
 

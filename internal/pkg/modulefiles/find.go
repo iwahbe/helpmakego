@@ -27,23 +27,8 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		return nil, fmt.Errorf("Go modules disabled")
 	}
 
-	goModDir, goMod, err := findGoMod(ctx, root)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to discover Go module: %w", err)
-	}
-
-	{ // Add go.{mod,sum}
-		goModPath := filepath.Join(goModDir, "go.mod")
-		goSumPath := filepath.Join(goModDir, "go.sum")
-		files[goModPath] = struct{}{} // goModPath must exist, since findGoMod returned without an error
-		if _, err := os.Stat(goSumPath); err == nil {
-			files[goSumPath] = struct{}{}
-		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("could not check if go.sum exists: %w", err)
-		}
-	}
-
-	for pkg, err := range findPackages(ctx, goMod, goModDir, root, testPaths) {
+	modules := modules{}
+	for pkg, err := range findPackages(ctx, modules, root, testPaths) {
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -61,6 +46,10 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		}
 	}
 
+	for _, m := range modules {
+		errs = append(errs, m.addRootFiles(files))
+	}
+
 	sortedFiles := make([]string, 0, len(files))
 	for file := range files {
 		sortedFiles = append(sortedFiles, file)
@@ -69,48 +58,26 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 	return sortedFiles, errors.Join(errs...)
 }
 
-func findGoMod(ctx context.Context, root string) (string, *modfile.File, error) {
-	slog.DebugContext(ctx, "Searching for go.mod", slog.String("root", root))
-	goModDir := root
-	var goModBytes []byte
-	for {
-		if b, err := os.ReadFile(filepath.Join(goModDir, "go.mod")); err == nil {
-			goModBytes = b
-			break
-		} else if os.IsNotExist(err) {
-			goModDir = filepath.Dir(goModDir)
-			if goModDir == string(filepath.Separator) {
-				return "", nil, errors.New("no go.mod file found")
-			}
-		} else {
-			return "", nil, err
-		}
-	}
-
-	goMod, err := modfile.Parse("go.mod", goModBytes, nil)
+func findPackages(ctx context.Context, modules modules, root string, includeTests bool) iter.Seq2[*build.Package, error] {
+	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
-		return "", nil, fmt.Errorf("could not parse %s: %w", filepath.Join(goModDir, "go.mod"), err)
+		slog.DebugContext(ctx, "unable to find initial go.mod")
 	}
-	return goModDir, goMod, nil
-}
-
-func findPackages(ctx context.Context, goMod *modfile.File, goModRoot, root string, includeTests bool) iter.Seq2[*build.Package, error] {
 	// Find the go.mod
-	replaces := make(map[string]string, len(goMod.Replace))
-	for _, r := range goMod.Replace {
+	replaces := make(map[string]string, len(goMod.file.Replace))
+	for _, r := range goMod.file.Replace {
 		// We only follow local replaces
 		if !modfile.IsDirectoryPath(r.New.Path) {
 			continue
 		}
-		replaces[r.Old.Path] = r.New.Path // Resolve to a better path
+		replaces[r.Old.Path] = filepath.Join(goMod.rootDir, r.New.Path) // Resolve to a better path
 	}
 
 	finder := packageFinder{
-		moduleName:    goMod.Module.Mod.Path,
-		moduleRootDir: goModRoot,
-		replaces:      replaces,
-		includeTests:  includeTests,
-		ctx:           ctx,
+		replaces:     replaces,
+		includeTests: includeTests,
+		ctx:          ctx,
+		modules:      modules,
 
 		seen: map[string]struct{}{},
 	}
@@ -119,19 +86,95 @@ func findPackages(ctx context.Context, goMod *modfile.File, goModRoot, root stri
 }
 
 type packageFinder struct {
-	ctx           context.Context
-	moduleName    string
-	moduleRootDir string
-	replaces      map[string]string
-	includeTests  bool
+	ctx context.Context
 
+	// modules is a map from directory names to their enclosing go module
+	modules modules
+
+	replaces     map[string]string
+	includeTests bool
+
+	// seen is a cache of modules already processed.
 	seen map[string]struct{}
+
+	// done indicates the traversal should abort.
 	done bool
+}
+
+type modules map[string]module
+
+type module struct {
+	file    *modfile.File
+	rootDir string
+}
+
+func (m modules) findGoMod(ctx context.Context, root string) (mod module, err error) {
+	if m == nil {
+		panic("m should not be nil")
+	}
+
+	slog.InfoContext(ctx, "Searching for go.mod", slog.String("root", root))
+	goModDir := root
+	var goModBytes []byte
+	for {
+		slog.DebugContext(ctx, "Searching for go.mod", slog.String("haystack", goModDir))
+		// Check the cache
+		if mod, ok := m[root]; ok {
+			return mod, nil
+		}
+
+		// Cache this dir to the module we eventually found.
+		defer func(path string) {
+			if err == nil {
+				m[path] = mod
+			}
+		}(goModDir)
+
+		if b, err := os.ReadFile(filepath.Join(goModDir, "go.mod")); err == nil {
+			goModBytes = b
+			break
+		} else if os.IsNotExist(err) {
+			goModDir = filepath.Dir(goModDir)
+			if goModDir == string(filepath.Separator) || goModDir == "." {
+				return module{}, errors.New("no go.mod file found")
+			}
+		} else {
+			return module{}, err
+		}
+	}
+
+	goMod, err := modfile.Parse("go.mod", goModBytes, nil)
+	if err != nil {
+		return module{}, fmt.Errorf("could not parse %s: %w", filepath.Join(goModDir, "go.mod"), err)
+	}
+	return module{file: goMod, rootDir: goModDir}, nil
+}
+
+func (m module) addRootFiles(files map[string]struct{}) error {
+	// Add go.{mod,sum}
+	goModPath := filepath.Join(m.rootDir, "go.mod")
+	goSumPath := filepath.Join(m.rootDir, "go.sum")
+	files[goModPath] = struct{}{} // goModPath must exist, since findGoMod returned without an error
+	if _, err := os.Stat(goSumPath); err == nil {
+		files[goSumPath] = struct{}{}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("could not check if go.sum exists: %w", err)
+	}
+	return nil
 }
 
 func (pf *packageFinder) findPackages(target string) func(yield func(*build.Package, error) bool) {
 	return func(yield func(*build.Package, error) bool) {
 		slog.DebugContext(pf.ctx, "searching for imports of", slog.String("target", target))
+
+		goMod, err := pf.modules.findGoMod(pf.ctx, target)
+		if err != nil {
+			slog.DebugContext(pf.ctx, "failed to find go.mod for", slog.String("target", target))
+			yield(nil, err)
+			pf.done = true
+			return
+		}
+
 		pkg, err := build.Default.ImportDir(target, 0)
 		if !yield(pkg, err) || err != nil {
 			pf.done = true
@@ -144,18 +187,19 @@ func (pf *packageFinder) findPackages(target string) func(yield func(*build.Pack
 				return
 			}
 			pf.seen[_import] = struct{}{}
-			rest, isInModule := strings.CutPrefix(_import, pf.moduleName)
+			rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
 			if !isInModule {
 				if replaceTarget, ok := pf.fromReplace(_import); ok {
 					slog.DebugContext(pf.ctx, "Replacing import",
 						slog.String("from", _import), slog.String("to", replaceTarget))
 					pf.findPackages(replaceTarget)(yield)
+					return
 				} else {
 					slog.DebugContext(pf.ctx, "Skipping foreign import", slog.String("module", _import))
 					return
 				}
 			}
-			pf.findPackages(filepath.Join(pf.moduleRootDir, rest))(yield)
+			pf.findPackages(filepath.Join(goMod.rootDir, rest))(yield)
 		}
 
 		slog.DebugContext(pf.ctx, "finding transitive imports",
