@@ -41,8 +41,11 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 
 		for _, file := range pkgFiles {
 			file = filepath.Join(pkg.Dir, file)
-			if f, err := filepath.Rel(root, file); err == nil {
-				slog.WarnContext(ctx, "Unable to get relative path", slog.String("file", file))
+			if f, err := filepath.Rel(root, file); err != nil {
+				slog.WarnContext(ctx, "Unable to get relative path",
+					slog.String("basepath", root),
+					slog.String("targetpath", file))
+			} else {
 				file = f
 			}
 			files[file] = struct{}{}

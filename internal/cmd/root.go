@@ -19,6 +19,8 @@ func Root() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+
 			var modRoot string
 			if len(args) == 0 {
 				wd, err := os.Getwd()
@@ -35,9 +37,21 @@ func Root() *cobra.Command {
 				return nil
 			}
 
-			slog.SetLogLoggerLevel(slog.LevelDebug)
+			switch os.Getenv("LOG") {
+			case "debug":
+				slog.SetLogLoggerLevel(slog.LevelDebug)
+			case "error":
+				slog.SetLogLoggerLevel(slog.LevelError)
+			case "info":
+				slog.SetLogLoggerLevel(slog.LevelInfo)
+			case "", "warn":
+				slog.SetLogLoggerLevel(slog.LevelWarn)
+			default:
+				slog.SetLogLoggerLevel(slog.LevelWarn)
+				slog.WarnContext(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
+			}
 
-			f, err := modulefiles.Find(cmd.Context(), modRoot, true /* include test files */)
+			f, err := modulefiles.Find(ctx, modRoot, true /* include test files */)
 			if err != nil {
 				return err
 			}
