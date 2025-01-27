@@ -12,8 +12,8 @@
 - [ ] Add a example of how to use it to the README.md (that should be the first thing)
 - [ ] Add a little icon to the README.md (AI generated gopher pushing a Make logo)
 - [ ] Validate with a complicated Pulumi package (like pulumi/pulumi-aws)
-- [ ] Add a `--test` flag, to also include test files
-  - [ ] Validate that the test flags work as expected
+- [x] Add a `--test` flag, to also include test files
+- [ ] Validate that the test flags work as expected
 - [ ] Account for `go.work` in dependency resolution
 - [x] Include `go.mod` and `go.sum`
 
