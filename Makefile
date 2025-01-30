@@ -1,12 +1,9 @@
-.PHONY: build
 build: bin/helpmakego
 
-bin:
-	mkdir bin
-
-.PHONY: bin/helpmakego
-bin/helpmakego: bin
-	go build  -o $@
+# We don't want to do this, but we don't want to depend on helpmakego to build helpmakego
+bin/helpmakego: $(shell find . -name '*.go') go.mod go.sum
+	mkdir -p bin
+	go build -o $@
 
 .PHONY: lint
 lint:
