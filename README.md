@@ -4,10 +4,10 @@
 
 ### Before release
 
-- [X] Change the name from `gomakeit` to `helpmakego`.
+- [x] Change the name from `gomakeit` to `helpmakego`.
 - [ ] Add tests for basic file traversal
 - [ ] Add tests for partial file traversal (building a binary that only needs part of a module)
-- [ ] Add tests that embeds are correctly expanded.
+- [x] Add tests that embeds are correctly expanded.
 - [ ] Add a description of how it works to the README.md (not the first thing)
 - [ ] Add a example of how to use it to the README.md (that should be the first thing)
 - [ ] Add a little icon to the README.md (AI generated gopher pushing a Make logo)
