@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -78,18 +79,22 @@ func expandEmbed(ctx context.Context, dir fs.FS, embed string, addFile addFile) 
 // embedded (recursively), except that files with names beginning with ‘.’ or ‘_’ are
 // excluded. So the variable in the above example is almost equivalent to:
 func embedDir(_ context.Context, root fs.FS, dir string, addFile addFile) error {
-	return fs.WalkDir(root, dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+	return fs.WalkDir(root, dir, func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil || dir == filePath {
 			return err
 		}
-		if strings.HasPrefix(path, ".") || strings.HasPrefix(path, "_") {
-			return fs.SkipDir
+
+		if name := path.Base(filePath); strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		// Make doesn't play well with directories, so we skip these.
 		if d.IsDir() {
 			return nil
 		}
-		addFile(path)
+		addFile(filePath)
 		return nil
 	})
 }
