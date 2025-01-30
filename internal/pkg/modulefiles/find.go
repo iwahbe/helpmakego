@@ -33,14 +33,9 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 			continue
 		}
 
-		pkgFiles, err := importPackage(ctx, pkg, testPaths)
-		if err != nil {
-			errs = append(errs, err)
-		}
-
-		for _, file := range pkgFiles {
-			files[filepath.Join(pkg.Dir, file)] = struct{}{}
-		}
+		errs = append(errs, importPackage(ctx, pkg, testPaths, func(fileName string) {
+			files[filepath.Join(pkg.Dir, fileName)] = struct{}{}
+		}))
 	}
 
 	for _, m := range modules {
@@ -54,6 +49,35 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 	slices.Sort(sortedFiles)
 	return sortedFiles, errors.Join(errs...)
 }
+
+func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, addFile addFile) error {
+	var errs []error
+	errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.EmbedPatterns, addFile))
+	if includeTests {
+		errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.TestEmbedPatterns, addFile))
+		errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.XTestEmbedPatterns, addFile))
+	}
+
+	applyNested(addFile,
+		pkg.GoFiles,        // .go source files (excluding CgoFiles, TestGoFiles, XTestGoFiles)
+		pkg.CgoFiles,       // .go source files that import "C"
+		pkg.IgnoredGoFiles, // .go source files ignored for this build (including ignored _test.go files)
+		pkg.InvalidGoFiles, // .go source files with detected problems (parse error, wrong package name, and so on)
+		pkg.CFiles,         // .c source files
+		pkg.CXXFiles,       // .cc, .cpp and .cxx source files
+		pkg.MFiles,         // .m (Objective-C) source files
+		pkg.HFiles,         // .h, .hh, .hpp and .hxx source files
+		pkg.FFiles,         // .f, .F, .for and .f90 Fortran source files
+		pkg.SFiles,         // .s source files
+		pkg.SwigFiles,      // .swig files
+		pkg.SwigCXXFiles,   // .swigcxx files
+		pkg.SysoFiles,      // .syso system object files to add to archive
+	)
+
+	return errors.Join(errs...)
+}
+
+type addFile = func(fileName string)
 
 func findPackages(ctx context.Context, modules modules, root string, includeTests bool) iter.Seq2[*build.Package, error] {
 	goMod, err := modules.findGoMod(ctx, root)
@@ -235,35 +259,4 @@ func (pf *packageFinder) fromReplace(_import string) (string, bool) {
 		return filepath.Join(newPath, rest), true
 	}
 	return "", false
-}
-
-func importPackage(ctx context.Context, pkg *build.Package, includeTests bool) ([]string, error) {
-	var errs []error
-	embedPatterns, err := expandEmbeds(ctx, pkg.Dir, pkg.EmbedPatterns)
-	errs = append(errs, err)
-	var testEmbedPatterns, xTestEmbedPatterns []string
-	if includeTests {
-		testEmbedPatterns, err = expandEmbeds(ctx, pkg.Dir, pkg.TestEmbedPatterns)
-		errs = append(errs, err)
-		xTestEmbedPatterns, err = expandEmbeds(ctx, pkg.Dir, pkg.XTestEmbedPatterns)
-		errs = append(errs, err)
-	}
-	return join(
-		pkg.GoFiles,        // .go source files (excluding CgoFiles, TestGoFiles, XTestGoFiles)
-		pkg.CgoFiles,       // .go source files that import "C"
-		pkg.IgnoredGoFiles, // .go source files ignored for this build (including ignored _test.go files)
-		pkg.InvalidGoFiles, // .go source files with detected problems (parse error, wrong package name, and so on)
-		pkg.CFiles,         // .c source files
-		pkg.CXXFiles,       // .cc, .cpp and .cxx source files
-		pkg.MFiles,         // .m (Objective-C) source files
-		pkg.HFiles,         // .h, .hh, .hpp and .hxx source files
-		pkg.FFiles,         // .f, .F, .for and .f90 Fortran source files
-		pkg.SFiles,         // .s source files
-		pkg.SwigFiles,      // .swig files
-		pkg.SwigCXXFiles,   // .swigcxx files
-		pkg.SysoFiles,      // .syso system object files to add to archive
-		embedPatterns,
-		testEmbedPatterns,
-		xTestEmbedPatterns,
-	), errors.Join(errs...)
 }

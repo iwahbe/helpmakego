@@ -1,17 +1,9 @@
 package modulefiles
 
-func join[T any](arrs ...[]T) []T {
-	size := 0
-	for _, v := range arrs {
-		size += len(v)
-	}
-	i := 0
-	dst := make([]T, size)
+func applyNested[T any](f func(T), arrs ...[]T) {
 	for _, arr := range arrs {
 		for _, e := range arr {
-			dst[i] = e
-			i++
+			f(e)
 		}
 	}
-	return dst
 }

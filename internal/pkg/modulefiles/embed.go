@@ -5,27 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"strconv"
 	"strings"
 )
 
-func expandEmbeds(ctx context.Context, root string, embeds []string) ([]string, error) {
-	estimate := 0
-	for _, embed := range embeds {
-		estimate += len(embed)
-	}
-	files := make([]string, 0, estimate)
+func expandEmbeds(ctx context.Context, root fs.FS, embeds []string, addFile addFile) error {
 	var errs []error
 	for _, glob := range embeds {
-		f, err := expandEmbed(ctx, os.DirFS(root), glob)
-		if err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		files = append(files, f...)
+		errs = append(errs, expandEmbed(ctx, root, glob, addFile))
 	}
-	return files, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // expandEmbed expands a go:embed glob into the files it describes.
@@ -40,26 +29,25 @@ func expandEmbeds(ctx context.Context, root string, embeds []string) ([]string, 
 // match everything in the current directory, use ‘*’ instead of ‘.’. To allow for naming
 // files with spaces in their names, patterns can be written as Go double-quoted or
 // back-quoted string literals.
-func expandEmbed(ctx context.Context, dir fs.FS, embed string) ([]string, error) {
+func expandEmbed(ctx context.Context, dir fs.FS, embed string, addFile addFile) error {
 	if strings.HasPrefix(embed, `"`) ||
 		strings.HasPrefix(embed, "`") {
 		var err error
 		embed, err = strconv.Unquote(embed)
 		if err != nil {
-			return nil, fmt.Errorf("invalid embed - failed to parse string: %w", err)
+			return fmt.Errorf("invalid embed - failed to parse string: %w", err)
 		}
 	}
 
 	if embed == "*" {
-		return embedDir(ctx, dir, ".")
+		return embedDir(ctx, dir, ".", addFile)
 	}
 
 	matches, err := fs.Glob(dir, embed)
 	if err != nil {
-		return nil, fmt.Errorf("invalid embed - invalid glob: %w", err)
+		return fmt.Errorf("invalid embed - invalid glob: %w", err)
 	}
 
-	var files []string
 	var errs []error
 	for _, match := range matches {
 		f, err := dir.Open(match)
@@ -73,15 +61,13 @@ func expandEmbed(ctx context.Context, dir fs.FS, embed string) ([]string, error)
 			continue
 		}
 		if s.IsDir() {
-			dirEntries, err := embedDir(ctx, dir, match)
-			files = append(files, dirEntries...)
-			errs = append(errs, err)
+			errs = append(errs, embedDir(ctx, dir, match, addFile))
 		} else {
-			files = append(files, match)
+			addFile(match)
 		}
 	}
 
-	return files, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // embedDir expands an entire directory, according to go:embed.
@@ -91,9 +77,8 @@ func expandEmbed(ctx context.Context, dir fs.FS, embed string) ([]string, error)
 // If a pattern names a directory, all files in the subtree rooted at that directory are
 // embedded (recursively), except that files with names beginning with ‘.’ or ‘_’ are
 // excluded. So the variable in the above example is almost equivalent to:
-func embedDir(_ context.Context, root fs.FS, dir string) ([]string, error) {
-	var files []string
-	err := fs.WalkDir(root, dir, func(path string, d fs.DirEntry, err error) error {
+func embedDir(_ context.Context, root fs.FS, dir string, addFile addFile) error {
+	return fs.WalkDir(root, dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -104,9 +89,7 @@ func embedDir(_ context.Context, root fs.FS, dir string) ([]string, error) {
 		if d.IsDir() {
 			return nil
 		}
-		files = append(files, path)
+		addFile(path)
 		return nil
 	})
-
-	return files, err
 }
