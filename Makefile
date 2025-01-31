@@ -8,3 +8,6 @@ bin/helpmakego: $(shell find . -name '*.go') go.mod go.sum
 .PHONY: lint
 lint:
 	golangci-lint run
+
+test:
+	go test -v ./...

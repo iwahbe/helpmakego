@@ -5,7 +5,7 @@
 ### Before release
 
 - [x] Change the name from `gomakeit` to `helpmakego`.
-- [X] Add tests for basic file traversal
+- [x] Add tests for basic file traversal
 - [ ] Add tests for partial file traversal (building a binary that only needs part of a module)
 - [x] Add tests that embeds are correctly expanded.
 - [ ] Add a description of how it works to the README.md (not the first thing)
@@ -14,7 +14,7 @@
 - [x] Validate with a complicated Pulumi package (like pulumi/pulumi-aws)
       GCP works, as long as we patch tfgen to not re-write input files (like `bridge-metadata.json`).
 - [x] Add a `--test` flag, to also include test files
-- [ ] Validate that the test flags work as expected
+- [x] Validate that the test flags work as expected
 - [ ] Account for `go.work` in dependency resolution
 - [x] Include `go.mod` and `go.sum`
 - [ ] Add a test for `replace`.

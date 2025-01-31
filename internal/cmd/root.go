@@ -62,7 +62,7 @@ func Root() *cobra.Command {
 		}
 
 		if cwd, err := os.Getwd(); err == nil {
-			paths = display.MakeRelative(ctx, cwd, paths)
+			paths = display.Relative(ctx, cwd, paths)
 		} else {
 			slog.WarnContext(ctx, "os.Getwd() failed - displaying absolute paths")
 		}

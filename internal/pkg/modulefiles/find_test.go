@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/iwahbe/helpmakego/internal/pkg/display"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,9 +14,11 @@ type findTest struct {
 	name     string
 	files    map[string]string
 	expected []string
+
+	includeTestFiles bool
 }
 
-func (ft findTest) run(t *testing.T) {
+func (tc findTest) run(t *testing.T) {
 	t.Parallel()
 	t.Helper()
 
@@ -23,7 +26,7 @@ func (ft findTest) run(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Write files to the temporary directory
-	for path, content := range ft.files {
+	for path, content := range tc.files {
 		fullPath := filepath.Join(tmpDir, path)
 		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
 		assert.NoError(t, err)
@@ -32,15 +35,10 @@ func (ft findTest) run(t *testing.T) {
 	}
 
 	// Run the Find function
-	files, err := Find(ctx, tmpDir, false)
-	assert.NoError(t, err)
-
-	// Assert that the expected files are found
-	expectedFiles := make([]string, len(ft.expected))
-	for i, file := range ft.expected {
-		expectedFiles[i] = filepath.Join(tmpDir, file)
+	files, err := Find(ctx, tmpDir, tc.includeTestFiles)
+	if assert.NoError(t, err) {
+		assert.ElementsMatch(t, tc.expected, display.Relative(ctx, tmpDir, files))
 	}
-	assert.ElementsMatch(t, expectedFiles, files)
 }
 
 func TestFindIntegration(t *testing.T) {
@@ -97,6 +95,90 @@ func Message() string {
 				"go.mod",
 				"main.go",
 				"pkg/pkg.go",
+			},
+		},
+		{
+			name: "2 Packages",
+			files: map[string]string{
+				"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+				"main.go": `package main
+
+import (
+	"fmt"
+	"example.com/testmod/pkg"
+)
+
+func main() {
+	fmt.Println(pkg.Message())
+}
+`,
+				"pkg/pkg.go": `package pkg
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+				"pkg/pkg_test.go": `package pkg
+
+import "testing"
+
+func TestMessage(t *testing.T) string {
+	if Message() != "Hello from pkg!" {
+		t.Fail()
+	}
+}
+`,
+			},
+			expected: []string{
+				"go.mod",
+				"main.go",
+				"pkg/pkg.go",
+			},
+		},
+		{
+			name:             "test files",
+			includeTestFiles: true,
+			files: map[string]string{
+				"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+				"main.go": `package main
+
+import (
+	"fmt"
+	"example.com/testmod/pkg"
+)
+
+func main() {
+	fmt.Println(pkg.Message())
+}
+`,
+				"pkg/pkg.go": `package pkg
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+				"pkg/pkg_test.go": `package pkg
+
+import "testing"
+
+func TestMessage(t *testing.T) string {
+	if Message() != "Hello from pkg!" {
+		t.Fail()
+	}
+}
+`,
+			},
+			expected: []string{
+				"go.mod",
+				"main.go",
+				"pkg/pkg.go",
+				"pkg/pkg_test.go",
 			},
 		},
 	}

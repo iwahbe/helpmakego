@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-func MakeRelative(ctx context.Context, wd string, paths []string) []string {
+func Relative(ctx context.Context, wd string, paths []string) []string {
 	relativePaths := make([]string, len(paths))
 	for i, path := range paths {
 		relativePaths[i] = makeRelative(ctx, wd, path)

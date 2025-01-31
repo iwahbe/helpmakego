@@ -54,6 +54,12 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 	var errs []error
 	errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.EmbedPatterns, addFile))
 	if includeTests {
+		// Include test files
+		applyNested(addFile,
+			pkg.TestGoFiles,
+			pkg.XTestGoFiles,
+		)
+		// Include test embeds
 		errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.TestEmbedPatterns, addFile))
 		errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.XTestEmbedPatterns, addFile))
 	}
