@@ -5,7 +5,7 @@
 ### Before release
 
 - [x] Change the name from `gomakeit` to `helpmakego`.
-- [ ] Add tests for basic file traversal
+- [X] Add tests for basic file traversal
 - [ ] Add tests for partial file traversal (building a binary that only needs part of a module)
 - [x] Add tests that embeds are correctly expanded.
 - [ ] Add a description of how it works to the README.md (not the first thing)
