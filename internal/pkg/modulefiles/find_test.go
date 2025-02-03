@@ -2,6 +2,7 @@ package modulefiles
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,11 @@ func (tc findTest) run(t *testing.T) {
 }
 
 func TestFindIntegration(t *testing.T) {
-	t.Parallel()
+	{ // Disable logging for the test
+		oldLogLevel := slog.SetLogLoggerLevel(10)
+		t.Cleanup(func() { slog.SetLogLoggerLevel(oldLogLevel) })
+
+	}
 
 	tests := []findTest{
 		{
@@ -179,6 +184,44 @@ func TestMessage(t *testing.T) string {
 				"main.go",
 				"pkg/pkg.go",
 				"pkg/pkg_test.go",
+			},
+		},
+
+		{
+			name: "partial dependency",
+			files: map[string]string{
+				"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+				"main.go": `package main
+
+import (
+	"fmt"
+	"example.com/testmod/pkg1"
+)
+
+func main() {
+	fmt.Println(pkg.Message())
+}
+`,
+				"pkg1/pkg.go": `package pkg1
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+				"pkg2/pkg.go": `package pkg2
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+			},
+			expected: []string{
+				"go.mod",
+				"main.go",
+				"pkg1/pkg.go",
 			},
 		},
 	}
