@@ -24,7 +24,7 @@ To use `helpmakego` in a Makefile, you can set up your dependencies like this:
 # Makefile
 
 # Define the target and its dependencies
-bin/my_tool: $(shell helpmakego ./cmd/my_tool)
+bin/my_tool: $(shell go run github.com/iwahbe/helpmakego@main ./cmd/my_tool)
 	@echo "Building my_tool..."
 	go build ./cmd/my_tool
 
