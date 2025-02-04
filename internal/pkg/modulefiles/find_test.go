@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -12,9 +13,12 @@ import (
 )
 
 type findTest struct {
-	name     string
-	files    map[string]string
-	expected []string
+	name string // The name of the test
+
+	files map[string]string // A path:content map of files for the test
+
+	expected []string // Files that Find is expected to surface.
+	runDir   string   // The path to the entry point in files.
 
 	includeTestFiles bool
 }
@@ -36,7 +40,7 @@ func (tc findTest) run(t *testing.T) {
 	}
 
 	// Run the Find function
-	files, err := Find(ctx, tmpDir, tc.includeTestFiles)
+	files, err := Find(ctx, path.Join(tmpDir, tc.runDir), tc.includeTestFiles)
 	if assert.NoError(t, err) {
 		assert.ElementsMatch(t, tc.expected, display.Relative(ctx, tmpDir, files))
 	}
@@ -222,6 +226,47 @@ func Message() string {
 				"go.mod",
 				"main.go",
 				"pkg1/pkg.go",
+			},
+		},
+		{
+			name:   "replace directive",
+			runDir: "pkg1",
+			files: map[string]string{
+				"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+
+require example.com/pkg2 v0.0.0
+
+replace example.com/pkg2 => ../pkg2
+`,
+				"pkg1/main.go": `package main
+
+import (
+	"fmt"
+	"example.com/pkg2"
+)
+
+func main() {
+	fmt.Println(pkg2.Message())
+}
+`,
+				"pkg2/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+				"pkg2/pkg.go": `package pkg2
+
+func Message() string {
+	return "Hello from pkg2!"
+}
+`,
+			},
+			expected: []string{
+				"pkg1/go.mod",
+				"pkg1/main.go",
+				"pkg2/go.mod",
+				"pkg2/pkg.go",
 			},
 		},
 	}

@@ -89,6 +89,9 @@ func findPackages(ctx context.Context, modules modules, root string, includeTest
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
 		slog.DebugContext(ctx, "unable to find initial go.mod")
+		return func(yield func(*build.Package, error) bool) {
+			yield(nil, err)
+		}
 	}
 	// Find the go.mod
 	replaces := make(map[string]string, len(goMod.file.Replace))

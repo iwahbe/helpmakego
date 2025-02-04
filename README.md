@@ -19,7 +19,7 @@
 - [x] Include `go.mod` and `go.sum`
 - [ ] Add a test for `replace`.
   - [ ] Ensure that this works as expected for nested `go.mod` files
-  - [ ] Ensure that this works as expected for non-nested `go.mod` files
+  - [x] Ensure that this works as expected for non-nested `go.mod` files
 
 ### After Release
 
