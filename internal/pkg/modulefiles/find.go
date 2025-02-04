@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"go/build"
 	"iter"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"golang.org/x/mod/modfile"
 )
 
@@ -88,7 +88,7 @@ type addFile = func(fileName string)
 func findPackages(ctx context.Context, modules modules, root string, includeTests bool) iter.Seq2[*build.Package, error] {
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
-		slog.DebugContext(ctx, "unable to find initial go.mod")
+		log.Debug(ctx, "unable to find initial go.mod")
 		return func(yield func(*build.Package, error) bool) {
 			yield(nil, err)
 		}
@@ -143,11 +143,11 @@ func (m modules) findGoMod(ctx context.Context, root string) (mod module, err er
 		panic("m should not be nil")
 	}
 
-	slog.InfoContext(ctx, "Searching for go.mod", slog.String("root", root))
+	log.Info(ctx, "Searching for go.mod", log.Attr("root", root))
 	goModDir := root
 	var goModBytes []byte
 	for {
-		slog.DebugContext(ctx, "Searching for go.mod", slog.String("haystack", goModDir))
+		log.Debug(ctx, "Searching for go.mod", log.Attr("haystack", goModDir))
 		// Check the cache
 		if mod, ok := m[root]; ok {
 			return mod, nil
@@ -195,11 +195,11 @@ func (m module) addRootFiles(files map[string]struct{}) error {
 
 func (pf *packageFinder) findPackages(target string) func(yield func(*build.Package, error) bool) {
 	return func(yield func(*build.Package, error) bool) {
-		slog.DebugContext(pf.ctx, "searching for imports of", slog.String("target", target))
+		log.Debug(pf.ctx, "searching for imports of", log.Attr("target", target))
 
 		goMod, err := pf.modules.findGoMod(pf.ctx, target)
 		if err != nil {
-			slog.DebugContext(pf.ctx, "failed to find go.mod for", slog.String("target", target))
+			log.Debug(pf.ctx, "failed to find go.mod for", log.Attr("target", target))
 			yield(nil, err)
 			pf.done = true
 			return
@@ -213,28 +213,28 @@ func (pf *packageFinder) findPackages(target string) func(yield func(*build.Pack
 
 		searchImport := func(_import string) {
 			if _, ok := pf.seen[_import]; ok {
-				slog.DebugContext(pf.ctx, "Skipping repeated import", slog.String("module", _import))
+				log.Debug(pf.ctx, "Skipping repeated import", log.Attr("module", _import))
 				return
 			}
 			pf.seen[_import] = struct{}{}
 			rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
 			if !isInModule {
 				if replaceTarget, ok := pf.fromReplace(_import); ok {
-					slog.DebugContext(pf.ctx, "Replacing import",
-						slog.String("from", _import), slog.String("to", replaceTarget))
+					log.Debug(pf.ctx, "Replacing import",
+						log.Attr("from", _import), log.Attr("to", replaceTarget))
 					pf.findPackages(replaceTarget)(yield)
 					return
 				} else {
-					slog.DebugContext(pf.ctx, "Skipping foreign import", slog.String("module", _import))
+					log.Debug(pf.ctx, "Skipping foreign import", log.Attr("module", _import))
 					return
 				}
 			}
 			pf.findPackages(filepath.Join(goMod.rootDir, rest))(yield)
 		}
 
-		slog.DebugContext(pf.ctx, "finding transitive imports",
-			slog.String("target", target),
-			slog.Any("imports", pkg.Imports),
+		log.Debug(pf.ctx, "finding transitive imports",
+			log.Attr("target", target),
+			log.Attr("imports", pkg.Imports),
 		)
 
 		for _, _import := range pkg.Imports {

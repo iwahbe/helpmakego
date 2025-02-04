@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/iwahbe/helpmakego/internal/pkg/display"
+	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
@@ -42,18 +44,24 @@ func Root() *cobra.Command {
 			return err
 		}
 
+		setLevel := func(level slog.Level) context.Context {
+			return log.New(ctx, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+				Level: level,
+			})))
+		}
+
 		switch os.Getenv("LOG") {
 		case "debug":
-			slog.SetLogLoggerLevel(slog.LevelDebug)
+			ctx = setLevel(slog.LevelDebug)
 		case "error":
-			slog.SetLogLoggerLevel(slog.LevelError)
+			ctx = setLevel(slog.LevelError)
 		case "info":
-			slog.SetLogLoggerLevel(slog.LevelInfo)
+			ctx = setLevel(slog.LevelInfo)
 		case "", "warn":
-			slog.SetLogLoggerLevel(slog.LevelWarn)
+			ctx = setLevel(slog.LevelWarn)
 		default:
-			slog.SetLogLoggerLevel(slog.LevelWarn)
-			slog.WarnContext(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
+			ctx = setLevel(slog.LevelWarn)
+			log.Warn(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
 		}
 
 		paths, err := modulefiles.Find(ctx, modRoot, *includeTest)
@@ -64,7 +72,7 @@ func Root() *cobra.Command {
 		if cwd, err := os.Getwd(); err == nil {
 			paths = display.Relative(ctx, cwd, paths)
 		} else {
-			slog.WarnContext(ctx, "os.Getwd() failed - displaying absolute paths")
+			log.Warn(ctx, "os.Getwd() failed - displaying absolute paths")
 		}
 
 		_, err = fmt.Printf("%s\n", strings.Join(paths, " "))

@@ -2,8 +2,9 @@ package display
 
 import (
 	"context"
-	"log/slog"
 	"path/filepath"
+
+	"github.com/iwahbe/helpmakego/internal/pkg/log"
 )
 
 func Relative(ctx context.Context, wd string, paths []string) []string {
@@ -19,8 +20,8 @@ func makeRelative(ctx context.Context, wd, path string) string {
 	if err == nil {
 		return relPath
 	}
-	slog.WarnContext(ctx, "Unable to get relative path",
-		slog.String("basepath", wd),
-		slog.String("targetpath", path))
+	log.Warn(ctx, "Unable to get relative path",
+		log.Attr("basepath", wd),
+		log.Attr("targetpath", path))
 	return path
 }
