@@ -15,7 +15,7 @@
       GCP works, as long as we patch tfgen to not re-write input files (like `bridge-metadata.json`).
 - [x] Add a `--test` flag, to also include test files
 - [x] Validate that the test flags work as expected
-- [ ] Account for `go.work` in dependency resolution
+- [x] Account for `go.work` in dependency resolution
 - [x] Include `go.mod` and `go.sum`
 - [x] Add a test for `replace`.
   - [x] Ensure that this works as expected for nested `go.mod` files

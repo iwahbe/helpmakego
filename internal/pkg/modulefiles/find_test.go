@@ -22,6 +22,117 @@ type testFindArgs struct {
 	includeTestFiles bool
 }
 
+func TestFindWithGoWorkspaceEnclosingTwoModules(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "pkg1",
+		files: map[string]string{
+			"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+`,
+			"pkg1/main.go": `package main
+
+import (
+	"fmt"
+	"example.com/pkg2"
+)
+
+func main() {
+	fmt.Println(pkg2.Message())
+}
+`,
+			"pkg2/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+			"pkg2/pkg.go": `package pkg2
+
+func Message() string {
+	return "Hello from pkg2!"
+}
+`,
+			"go.work": `go 1.18
+
+use ./pkg1
+use ./pkg2
+`,
+			"go.work.sum": ``,
+		},
+		expected: []string{
+			"pkg1/go.mod",
+			"pkg1/main.go",
+			"pkg2/go.mod",
+			"pkg2/pkg.go",
+			"go.work",
+			"go.work.sum",
+		},
+	})
+}
+
+func TestFindWithGoWork(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		files: map[string]string{
+			"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+			"main.go": `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, World!")
+}
+`,
+			"go.work": `go 1.18
+
+use .
+`,
+			"go.work.sum": ``,
+		},
+		expected: []string{
+			"go.mod",
+			"main.go",
+			"go.work",
+			"go.work.sum",
+		},
+	})
+}
+
+func TestFindWithNestedGoWork(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "./pkg",
+		files: map[string]string{
+			"pkg/go.mod": `module example.com/testmod
+
+go 1.18
+`,
+			"pkg/main.go": `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, World!")
+}
+`,
+			"go.work": `go 1.18
+
+use ./pkg
+`,
+			"go.work.sum": ``,
+		},
+		expected: []string{
+			"pkg/go.mod",
+			"pkg/main.go",
+			"go.work",
+			"go.work.sum",
+		},
+	})
+}
+
 func TestFindNestedModules(t *testing.T) {
 	t.Parallel()
 	testFind(t, testFindArgs{

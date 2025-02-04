@@ -7,6 +7,7 @@ import (
 	"go/build"
 	"iter"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,8 +25,11 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		return nil, fmt.Errorf("Go modules disabled")
 	}
 
-	modules := modules{}
-	for pkg, err := range findPackages(ctx, modules, root, testPaths) {
+	packages, modules, workspace, err := findPackages(ctx, root, testPaths)
+	if err != nil {
+		return nil, err
+	}
+	for pkg, err := range packages {
 		if err != nil {
 			errs = append(errs, err)
 		}
@@ -40,6 +44,9 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 
 	for _, m := range modules {
 		errs = append(errs, m.addRootFiles(files))
+	}
+	if workspace != nil {
+		errs = append(errs, workspace.addRootFiles(files))
 	}
 
 	sortedFiles := make([]string, 0, len(files))
@@ -85,14 +92,14 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 
 type addFile = func(fileName string)
 
-func findPackages(ctx context.Context, modules modules, root string, includeTests bool) iter.Seq2[*build.Package, error] {
+func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], modules, *goWorkspace, error) {
+	modules := modules{}
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
 		log.Debug(ctx, "unable to find initial go.mod")
-		return func(yield func(*build.Package, error) bool) {
-			yield(nil, err)
-		}
+		return nil, nil, nil, err
 	}
+
 	// Find the go.mod
 	replaces := make(map[string]string, len(goMod.file.Replace))
 	for _, r := range goMod.file.Replace {
@@ -101,6 +108,42 @@ func findPackages(ctx context.Context, modules modules, root string, includeTest
 			continue
 		}
 		replaces[r.Old.Path] = filepath.Join(goMod.rootDir, r.New.Path) // Resolve to a better path
+	}
+
+	var goWork *goWorkspace
+	if os.Getenv("GOWORK") == "off" {
+		log.Debug(ctx, "Go workspaces explicitly disabled")
+	} else {
+		goWork, err = modules.findGoWork(ctx, root)
+		if errors.Is(err, noGoWorkFound) {
+			log.Debug(ctx, "no go.work found above %s")
+		} else if err != nil {
+			return nil, nil, nil, err
+		} else {
+			// Apply replaces from go.work
+			for _, r := range goWork.file.Replace {
+				// We only follow local replaces
+				if !modfile.IsDirectoryPath(r.New.Path) {
+					continue
+				}
+				replaces[r.Old.Path] = filepath.Join(goWork.rootDir, r.New.Path) // Resolve to a better path
+			}
+
+			// Apply `use` statements
+			for _, u := range goWork.file.Use {
+				modDir := path.Clean(path.Join(goWork.rootDir, u.Path)) // modDir is where we expect the module to live
+				mod, err := modules.findGoMod(ctx, modDir)
+				if err != nil {
+					log.Error(ctx, "unable to find module in go.work",
+						log.Attr("module", modDir),
+						log.Attr("workspace", goWork.rootDir),
+					)
+					continue
+				}
+				// For our purposes, each `use` statement resolves like a replace statement.
+				replaces[mod.file.Module.Mod.Path] = modDir
+			}
+		}
 	}
 
 	finder := packageFinder{
@@ -112,7 +155,7 @@ func findPackages(ctx context.Context, modules modules, root string, includeTest
 		seen: map[string]struct{}{},
 	}
 
-	return finder.findPackages(root)
+	return finder.findPackages(root), modules, goWork, nil
 }
 
 type packageFinder struct {
@@ -179,6 +222,61 @@ func (m modules) findGoMod(ctx context.Context, root string) (mod module, err er
 	}
 	return module{file: goMod, rootDir: goModDir}, nil
 }
+
+type goWorkspace struct {
+	file    *modfile.WorkFile
+	rootDir string
+}
+
+func (m modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace, err error) {
+	if m == nil {
+		panic("m should not be nil")
+	}
+
+	log.Info(ctx, "Searching for go.work", log.Attr("root", root))
+	dir, err := m.findGoMod(ctx, root) // We root our search in the enclosing go.mod's dir
+	if err != nil {
+		return nil, err
+	}
+	goWorkDir := dir.rootDir
+	var goWorkBytes []byte
+	for {
+		log.Debug(ctx, "Searching for go.work", log.Attr("haystack", goWorkDir))
+
+		if b, err := os.ReadFile(filepath.Join(goWorkDir, "go.work")); err == nil {
+			goWorkBytes = b
+			break
+		} else if os.IsNotExist(err) {
+			goWorkDir = filepath.Dir(goWorkDir)
+			if goWorkDir == string(filepath.Separator) || goWorkDir == "." {
+				return nil, noGoWorkFound
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	goWork, err := modfile.ParseWork("go.mod", goWorkBytes, nil)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse %s: %w", filepath.Join(goWorkDir, "go.work"), err)
+	}
+	return &goWorkspace{file: goWork, rootDir: goWorkDir}, nil
+}
+
+func (m goWorkspace) addRootFiles(files map[string]struct{}) error {
+	// Add go.work & go.work.sum
+	goWorkPath := filepath.Join(m.rootDir, "go.work")
+	goWorkSumPath := filepath.Join(m.rootDir, "go.work.sum")
+	files[goWorkPath] = struct{}{}
+	if _, err := os.Stat(goWorkSumPath); err == nil {
+		files[goWorkSumPath] = struct{}{}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("could not check if go.work.sum exists: %w", err)
+	}
+	return nil
+}
+
+var noGoWorkFound = errors.New("no go.work found")
 
 func (m module) addRootFiles(files map[string]struct{}) error {
 	// Add go.{mod,sum}

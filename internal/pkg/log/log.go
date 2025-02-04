@@ -35,6 +35,10 @@ func Info(ctx context.Context, msg string, args ...any) {
 	getLogger(ctx).InfoContext(ctx, msg, args...)
 }
 
+func Error(ctx context.Context, msg string, args ...any) {
+	getLogger(ctx).ErrorContext(ctx, msg, args...)
+}
+
 func Attr[T interface{ string | int | []string }](key string, value T) slog.Attr {
 	switch value := any(value).(type) {
 	case string:
