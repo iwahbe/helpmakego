@@ -1,25 +1,42 @@
 # `helpmakego` - A make dependency resolver for Go
 
-## TODO
+## How it Works
 
-### Before release
+`helpmakego` is a tool designed to resolve dependencies for Go projects, making it easier
+to integrate with Makefiles. It traverses the Go module's directory structure, identifying
+all files that are part of the module, including optional test files if specified.
 
-- [x] Change the name from `gomakeit` to `helpmakego`.
-- [x] Add tests for basic file traversal
-- [x] Add tests for partial file traversal (building a binary that only needs part of a module)
-- [x] Add tests that embeds are correctly expanded.
-- [ ] Add a description of how it works to the README.md (not the first thing)
-- [ ] Add a example of how to use it to the README.md (that should be the first thing)
-- [ ] Add a little icon to the README.md (AI generated gopher pushing a Make logo)
-- [x] Validate with a complicated Pulumi package (like pulumi/pulumi-aws)
-      GCP works, as long as we patch tfgen to not re-write input files (like `bridge-metadata.json`).
-- [x] Add a `--test` flag, to also include test files
-- [x] Validate that the test flags work as expected
-- [x] Account for `go.work` in dependency resolution
-- [x] Include `go.mod` and `go.sum`
-- [x] Add a test for `replace`.
-  - [x] Ensure that this works as expected for nested `go.mod` files
-  - [x] Ensure that this works as expected for non-nested `go.mod` files
+
+`helpmakego` aims to provide as fine grain a dependency set as possible. It respects:
+
+- `go.mod` (including local `replace` directives) and `go.sum`
+- `go.work` (including local `replace` directives) and `go.work.sum`
+- `go:embed` directives
+
+Like the `go build` tool itself, `helpmakego` only considers packages that are actually
+referenced.
+
+## Usage Example
+
+To use `helpmakego` in a Makefile, you can set up your dependencies like this:
+
+```makefile
+# Makefile
+
+# Define the target and its dependencies
+bin/my_tool: $(shell helpmakego ./cmd/my_tool)
+	@echo "Building my_tool..."
+	go build ./cmd/my_tool
+
+# package.zip may be expensive to build, but it will only be rebuilt when necessary.
+package.zip: bin/my-tool
+    zip my-tool other-files
+```
+
+In this example, `helpmakego .` is used to dynamically generate the list of file
+dependencies for `my_target`. This ensures that any changes in the Go module's
+dependencies will trigger a rebuild of `my_target`, and that `my_target` will only rebuild
+when it needs to.
 
 ### After Release
 
