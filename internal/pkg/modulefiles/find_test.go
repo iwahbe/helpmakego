@@ -22,6 +22,50 @@ type testFindArgs struct {
 	includeTestFiles bool
 }
 
+func TestFindNestedModules(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "pkg1",
+		files: map[string]string{
+			"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+
+require example.com/pkg2 v0.0.0
+
+replace example.com/pkg2 => ./pkg2
+`,
+			"pkg1/main.go": `package main
+
+import (
+	"fmt"
+	"example.com/pkg2"
+)
+
+func main() {
+	fmt.Println(pkg2.Message())
+}
+`,
+			"pkg1/pkg2/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+			"pkg1/pkg2/pkg.go": `package pkg2
+
+func Message() string {
+	return "Hello from nested pkg2!"
+}
+`,
+		},
+		expected: []string{
+			"pkg1/go.mod",
+			"pkg1/main.go",
+			"pkg1/pkg2/go.mod",
+			"pkg1/pkg2/pkg.go",
+		},
+	})
+}
+
 func testFind(t *testing.T, args testFindArgs) {
 	t.Helper()
 
