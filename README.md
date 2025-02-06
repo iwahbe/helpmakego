@@ -37,9 +37,3 @@ In this example, `helpmakego .` is used to dynamically generate the list of file
 dependencies for `my_target`. This ensures that any changes in the Go module's
 dependencies will trigger a rebuild of `my_target`, and that `my_target` will only rebuild
 when it needs to.
-
-### After Release
-
-- [ ] Add CI
-  - [ ] Run tests
-  - [ ] Run linter
