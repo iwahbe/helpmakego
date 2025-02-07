@@ -23,10 +23,21 @@ To use `helpmakego` in a Makefile, you can set up your dependencies like this:
 ```makefile
 # Makefile
 
+# Ensure that `helpmakego` is installed at ${HELPMAKEGO} before it is used to resolve targets.
+#
+# This has the side effect of ensuring that the `bin` directory is present.
+HELPMAKEGO_VERSION := v0.1.0
+HELPMAKEGO := bin/${HELPMAKEGO_VERSION}/helpmakego
+_ := $(shell if ! [ -x ${HELPMAKEGO} ]; then \
+	GOBIN=$(shell pwd)/bin/${HELPMAKEGO_VERSION} go install github.com/iwahbe/helpmakego@${HELPMAKEGO_VERSION}; \
+	fi \
+)
+
 # Define the target and its dependencies
-bin/my_tool: $(shell go run github.com/iwahbe/helpmakego@main ./cmd/my_tool)
+
+bin/my_tool: $(shell ${HELPMAKEGO} ./cmd/my_tool)
 	@echo "Building my_tool..."
-	go build ./cmd/my_tool
+	go build -o $@ ./cmd/my_tool
 
 # package.zip may be expensive to build, but it will only be rebuilt when necessary.
 package.zip: bin/my-tool
