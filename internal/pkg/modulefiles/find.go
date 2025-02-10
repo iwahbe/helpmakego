@@ -17,7 +17,7 @@ import (
 )
 
 // Find the set of files that are depended on by the package at root.
-func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
+func Find(ctx context.Context, root string, testPaths, modFiles bool) ([]string, error) {
 	var errs []error
 
 	files := map[string]struct{}{}
@@ -42,11 +42,13 @@ func Find(ctx context.Context, root string, testPaths bool) ([]string, error) {
 		}))
 	}
 
-	for _, m := range modules {
-		errs = append(errs, m.addRootFiles(files))
-	}
-	if workspace != nil {
-		errs = append(errs, workspace.addRootFiles(files))
+	if modFiles {
+		for _, m := range modules {
+			errs = append(errs, m.addRootFiles(files))
+		}
+		if workspace != nil {
+			errs = append(errs, workspace.addRootFiles(files))
+		}
 	}
 
 	sortedFiles := make([]string, 0, len(files))
