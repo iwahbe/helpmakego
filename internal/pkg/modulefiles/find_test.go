@@ -20,6 +20,7 @@ type testFindArgs struct {
 	runDir   string   // The path to the entry point in files.
 
 	includeTestFiles bool
+	excludeModFiles  bool
 }
 
 func TestFindWithGoWorkspaceEnclosingTwoModules(t *testing.T) {
@@ -197,7 +198,7 @@ func testFind(t *testing.T, args testFindArgs) {
 	}
 
 	// Run the Find function
-	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles)
+	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles)
 	if assert.NoError(t, err) {
 		assert.ElementsMatch(t, args.expected, display.Relative(ctx, tmpDir, files))
 	}
@@ -222,6 +223,30 @@ func main() {
 		},
 		expected: []string{
 			"go.mod",
+			"main.go",
+		},
+	})
+}
+
+func TestFindSinglePackageNoMod(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		excludeModFiles: true,
+		files: map[string]string{
+			"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+			"main.go": `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("Hello, World!")
+}
+`,
+		},
+		expected: []string{
 			"main.go",
 		},
 	})

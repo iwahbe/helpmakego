@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,6 +25,9 @@ func Root() *cobra.Command {
 	}
 
 	includeTest := cmd.Flags().Bool("test", false, "include test files in the dependency analysis")
+	outputJSON := cmd.Flags().Bool("json", false, "output source files as a a JSON array")
+	absolutePaths := cmd.Flags().Bool("abs", false, "output absolute paths instead of relative paths")
+	includeMod := cmd.Flags().Bool("mod", true, "include module files in the result")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
@@ -64,18 +68,24 @@ func Root() *cobra.Command {
 			log.Warn(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
 		}
 
-		paths, err := modulefiles.Find(ctx, modRoot, *includeTest)
+		paths, err := modulefiles.Find(ctx, modRoot, *includeTest, *includeMod)
 		if err != nil {
 			return err
 		}
 
-		if cwd, err := os.Getwd(); err == nil {
-			paths = display.Relative(ctx, cwd, paths)
-		} else {
-			log.Warn(ctx, "os.Getwd() failed - displaying absolute paths")
+		if !*absolutePaths {
+			if cwd, err := os.Getwd(); err == nil {
+				paths = display.Relative(ctx, cwd, paths)
+			} else {
+				log.Warn(ctx, "os.Getwd() failed - displaying absolute paths")
+			}
 		}
 
-		_, err = fmt.Printf("%s\n", strings.Join(paths, " "))
+		if *outputJSON {
+			err = json.NewEncoder(os.Stdout).Encode(paths)
+		} else {
+			_, err = fmt.Printf("%s\n", strings.Join(paths, " "))
+		}
 		return err
 	}
 
