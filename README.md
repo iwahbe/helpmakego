@@ -18,7 +18,14 @@ referenced.
 
 ## Usage Example
 
-To use `helpmakego` in a Makefile, you can set up your dependencies like this:
+To use `helpmakego` in a Makefile, you can add `helpmakego` as a `go tool`[^1]:
+
+``` sh
+# Run once
+go get -tool github.com/iwahbe/helpmakego
+```
+
+You can then use `go tool github.com/iwahbe/helpmakego` in your Makefile:
 
 ```makefile
 # Makefile
@@ -34,8 +41,7 @@ _ := $(shell if ! [ -x ${HELPMAKEGO} ]; then \
 )
 
 # Define the target and its dependencies
-
-bin/my_tool: $(shell ${HELPMAKEGO} ./cmd/my_tool)
+bin/my_tool: $(shell go tool github.com/iwahbe/helpmakego ./cmd/my_tool)
 	@echo "Building my_tool..."
 	go build -o $@ ./cmd/my_tool
 
@@ -48,3 +54,5 @@ In this example, `helpmakego .` is used to dynamically generate the list of file
 dependencies for `my_target`. This ensures that any changes in the Go module's
 dependencies will trigger a rebuild of `my_target`, and that `my_target` will only rebuild
 when it needs to.
+
+[^1]: Added in Go 1.24: https://pkg.go.dev/cmd/go#hdr-Run_specified_go_tool
