@@ -1,6 +1,6 @@
 module github.com/iwahbe/helpmakego
 
-go 1.23.4
+go 1.24
 
 require (
 	github.com/psanford/memfs v0.0.0-20241019191636-4ef911798f9b
