@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"golang.org/x/mod/modfile"
@@ -43,9 +45,10 @@ func Find(ctx context.Context, root string, testPaths, modFiles bool) ([]string,
 	}
 
 	if modFiles {
-		for _, m := range modules {
-			errs = append(errs, m.addRootFiles(files))
-		}
+		(*sync.Map)(modules).Range(func(_, m any) bool {
+			errs = append(errs, m.(module).addRootFiles(files))
+			return true
+		})
 		if workspace != nil {
 			errs = append(errs, workspace.addRootFiles(files))
 		}
@@ -94,7 +97,7 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 
 type addFile = func(fileName string)
 
-func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], modules, *goWorkspace, error) {
+func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], *modules, *goWorkspace, error) {
 	modules := modules{}
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
@@ -148,42 +151,82 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		}
 	}
 
+	incoming := make(chan pkgOut, 50)
+
 	finder := packageFinder{
 		replaces:     replaces,
 		includeTests: includeTests,
 		ctx:          ctx,
-		modules:      modules,
+		modules:      &modules,
 
-		seen: map[string]struct{}{},
+		dst: incoming,
 	}
 
-	return finder.findPackages(root), modules, goWork, nil
+	finder.wg.Add(1)
+	go finder.findPackages(root)
+
+	done := make(chan struct{})
+
+	go func() {
+		finder.wg.Wait()
+		close(done)
+	}()
+
+	return func(yield func(*build.Package, error) bool) {
+		for {
+			select {
+			case d := <-incoming:
+				if !yield(d.pkg, d.err) {
+					return
+				}
+			case <-done:
+				return
+			}
+
+		}
+	}, &modules, goWork, nil
+}
+
+type pkgOut struct {
+	pkg *build.Package
+	err error
 }
 
 type packageFinder struct {
 	ctx context.Context
 
-	// modules is a map from directory names to their enclosing go module
-	modules modules
-
+	// Global state - does not change over time
 	replaces     map[string]string
 	includeTests bool
 
+	// modules is a map from directory names to their enclosing go module
+	//
+	// Needs to be updated occasionally.
+	modules *modules
+
 	// seen is a cache of modules already processed.
-	seen map[string]struct{}
+	//
+	// Needs to be updated constantly and should be globally consistent
+	seen sync.Map // Map of string -> struct{}
+
+	dst chan<- pkgOut
+
+	wg sync.WaitGroup
 
 	// done indicates the traversal should abort.
-	done bool
+	//
+	// May be eventually consistent or modeled with a channel.
+	done atomic.Bool
 }
 
-type modules map[string]module
+type modules sync.Map
 
 type module struct {
 	file    *modfile.File
 	rootDir string
 }
 
-func (m modules) findGoMod(ctx context.Context, root string) (mod module, err error) {
+func (m *modules) findGoMod(ctx context.Context, root string) (mod module, err error) {
 	if m == nil {
 		panic("m should not be nil")
 	}
@@ -194,14 +237,14 @@ func (m modules) findGoMod(ctx context.Context, root string) (mod module, err er
 	for {
 		log.Debug(ctx, "Searching for go.mod", log.Attr("haystack", goModDir))
 		// Check the cache
-		if mod, ok := m[root]; ok {
-			return mod, nil
+		if mod, ok := (*sync.Map)(m).Load(root); ok {
+			return mod.(module), nil
 		}
 
 		// Cache this dir to the module we eventually found.
 		defer func(path string) {
 			if err == nil {
-				m[path] = mod
+				(*sync.Map)(m).Store(path, mod)
 			}
 		}(goModDir)
 
@@ -230,7 +273,7 @@ type goWorkspace struct {
 	rootDir string
 }
 
-func (m modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace, err error) {
+func (m *modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace, err error) {
 	if m == nil {
 		panic("m should not be nil")
 	}
@@ -293,67 +336,69 @@ func (m module) addRootFiles(files map[string]struct{}) error {
 	return nil
 }
 
-func (pf *packageFinder) findPackages(target string) func(yield func(*build.Package, error) bool) {
-	return func(yield func(*build.Package, error) bool) {
-		log.Debug(pf.ctx, "searching for imports of", log.Attr("target", target))
+func (pf *packageFinder) findPackages(target string) {
+	log.Debug(pf.ctx, "searching for imports of", log.Attr("target", target))
+	defer pf.wg.Done()
 
-		goMod, err := pf.modules.findGoMod(pf.ctx, target)
-		if err != nil {
-			log.Debug(pf.ctx, "failed to find go.mod for", log.Attr("target", target))
-			yield(nil, err)
-			pf.done = true
+	goMod, err := pf.modules.findGoMod(pf.ctx, target)
+	if err != nil {
+		log.Debug(pf.ctx, "failed to find go.mod for", log.Attr("target", target))
+		pf.dst <- pkgOut{err: err}
+		pf.done.Store(true) // Do we still need this?
+		return
+	}
+
+	pkg, err := build.Default.ImportDir(target, 0)
+	pf.dst <- pkgOut{pkg: pkg, err: err}
+	if err != nil {
+		pf.done.Store(true)
+		return
+	}
+
+	searchImport := func(_import string) {
+
+		if _, ok := pf.seen.LoadOrStore(_import, struct{}{}); ok {
+			log.Debug(pf.ctx, "Skipping repeated import", log.Attr("module", _import))
+			return
+		}
+		rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
+		if !isInModule {
+			if replaceTarget, ok := pf.fromReplace(_import); ok {
+				log.Debug(pf.ctx, "Replacing import",
+					log.Attr("from", _import), log.Attr("to", replaceTarget))
+				pf.wg.Add(1)
+				go pf.findPackages(replaceTarget)
+				return
+			} else {
+				log.Debug(pf.ctx, "Skipping foreign import", log.Attr("module", _import))
+				return
+			}
+		}
+		pf.wg.Add(1)
+		go pf.findPackages(filepath.Join(goMod.rootDir, rest))
+	}
+
+	log.Debug(pf.ctx, "finding transitive imports",
+		log.Attr("target", target),
+		log.Attr("imports", pkg.Imports),
+	)
+
+	for _, _import := range pkg.Imports {
+		if searchImport(_import); pf.done.Load() {
 			return
 		}
 
-		pkg, err := build.Default.ImportDir(target, 0)
-		if !yield(pkg, err) || err != nil {
-			pf.done = true
-			return
-		}
+	}
 
-		searchImport := func(_import string) {
-			if _, ok := pf.seen[_import]; ok {
-				log.Debug(pf.ctx, "Skipping repeated import", log.Attr("module", _import))
+	if pf.includeTests {
+		for _, _import := range pkg.TestImports {
+			if searchImport(_import); pf.done.Load() {
 				return
 			}
-			pf.seen[_import] = struct{}{}
-			rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
-			if !isInModule {
-				if replaceTarget, ok := pf.fromReplace(_import); ok {
-					log.Debug(pf.ctx, "Replacing import",
-						log.Attr("from", _import), log.Attr("to", replaceTarget))
-					pf.findPackages(replaceTarget)(yield)
-					return
-				} else {
-					log.Debug(pf.ctx, "Skipping foreign import", log.Attr("module", _import))
-					return
-				}
-			}
-			pf.findPackages(filepath.Join(goMod.rootDir, rest))(yield)
 		}
-
-		log.Debug(pf.ctx, "finding transitive imports",
-			log.Attr("target", target),
-			log.Attr("imports", pkg.Imports),
-		)
-
-		for _, _import := range pkg.Imports {
-			if searchImport(_import); pf.done {
+		for _, _import := range pkg.XTestImports {
+			if searchImport(_import); pf.done.Load() {
 				return
-			}
-
-		}
-
-		if pf.includeTests {
-			for _, _import := range pkg.TestImports {
-				if searchImport(_import); pf.done {
-					return
-				}
-			}
-			for _, _import := range pkg.XTestImports {
-				if searchImport(_import); pf.done {
-					return
-				}
 			}
 		}
 	}
