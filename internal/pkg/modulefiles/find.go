@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"golang.org/x/mod/modfile"
@@ -115,6 +114,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		replaces[r.Old.Path] = filepath.Join(goMod.rootDir, r.New.Path) // Resolve to a better path
 	}
 
+	// Find the go.work, if any and if its not disabled.
 	var goWork *goWorkspace
 	if os.Getenv("GOWORK") == "off" {
 		log.Debug(ctx, "Go workspaces explicitly disabled")
@@ -151,35 +151,42 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		}
 	}
 
-	incoming := make(chan pkgOut, 50)
+	incoming := make(chan *build.Package, 50)
+
+	ctx, cancel := context.WithCancelCause(ctx)
 
 	finder := packageFinder{
 		replaces:     replaces,
 		includeTests: includeTests,
-		ctx:          ctx,
 		modules:      &modules,
-
-		dst: incoming,
+		cancel:       cancel,
+		dst:          incoming,
 	}
 
 	finder.wg.Add(1)
-	go finder.findPackages(root)
+	go finder.findPackages(ctx, root)
 
-	done := make(chan struct{})
-
-	go func() {
-		finder.wg.Wait()
-		close(done)
-	}()
+	// done represents that package finding is still ongoing.
+	//
+	// When done is closed, it indicates that the search should stop
+	go func() { finder.wg.Wait(); cancel(finishedCleanly{}) }()
 
 	return func(yield func(*build.Package, error) bool) {
+		// Make sure to avoid leaking the cancel request.
+		defer cancel(nil)
+
 		for {
 			select {
-			case d := <-incoming:
-				if !yield(d.pkg, d.err) {
+			case pkg := <-incoming:
+				if !yield(pkg, nil) {
 					return
 				}
-			case <-done:
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				_, clean := err.(finishedCleanly)
+				if !clean {
+					yield(nil, err)
+				}
 				return
 			}
 
@@ -187,38 +194,31 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 	}, &modules, goWork, nil
 }
 
-type pkgOut struct {
-	pkg *build.Package
-	err error
-}
+type finishedCleanly struct{}
+
+func (finishedCleanly) Error() string { return "finished cleanly" }
 
 type packageFinder struct {
-	ctx context.Context
-
 	// Global state - does not change over time
 	replaces     map[string]string
 	includeTests bool
 
 	// modules is a map from directory names to their enclosing go module
-	//
-	// Needs to be updated occasionally.
 	modules *modules
 
 	// seen is a cache of modules already processed.
-	//
-	// Needs to be updated constantly and should be globally consistent
 	seen sync.Map // Map of string -> struct{}
 
-	dst chan<- pkgOut
+	dst chan<- *build.Package
 
 	wg sync.WaitGroup
 
-	// done indicates the traversal should abort.
-	//
-	// May be eventually consistent or modeled with a channel.
-	done atomic.Bool
+	cancel func(error)
 }
 
+// A lookup table from directory names to the go module they represent.
+//
+// The underlying map is of string -> module
 type modules sync.Map
 
 type module struct {
@@ -336,70 +336,73 @@ func (m module) addRootFiles(files map[string]struct{}) error {
 	return nil
 }
 
-func (pf *packageFinder) findPackages(target string) {
-	log.Debug(pf.ctx, "searching for imports of", log.Attr("target", target))
+func (pf *packageFinder) findPackages(ctx context.Context, target string) {
+	log.Debug(ctx, "searching for imports of", log.Attr("target", target))
+	// Decrement the wait grounp associated with this function
+	// call.
+	//
+	// Each call to findPackages should have called pf.wg.Add(1) before starting
+	// findPackages in a background thread.
 	defer pf.wg.Done()
 
-	goMod, err := pf.modules.findGoMod(pf.ctx, target)
+	goMod, err := pf.modules.findGoMod(ctx, target)
 	if err != nil {
-		log.Debug(pf.ctx, "failed to find go.mod for", log.Attr("target", target))
-		pf.dst <- pkgOut{err: err}
-		pf.done.Store(true) // Do we still need this?
+		log.Debug(ctx, "failed to find go.mod for", log.Attr("target", target))
+		pf.cancel(err)
 		return
 	}
 
 	pkg, err := build.Default.ImportDir(target, 0)
-	pf.dst <- pkgOut{pkg: pkg, err: err}
 	if err != nil {
-		pf.done.Store(true)
+		pf.cancel(err)
 		return
 	}
+	pf.dst <- pkg
 
 	searchImport := func(_import string) {
-
 		if _, ok := pf.seen.LoadOrStore(_import, struct{}{}); ok {
-			log.Debug(pf.ctx, "Skipping repeated import", log.Attr("module", _import))
+			log.Debug(ctx, "Skipping repeated import", log.Attr("module", _import))
 			return
 		}
 		rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
 		if !isInModule {
 			if replaceTarget, ok := pf.fromReplace(_import); ok {
-				log.Debug(pf.ctx, "Replacing import",
+				log.Debug(ctx, "Replacing import",
 					log.Attr("from", _import), log.Attr("to", replaceTarget))
 				pf.wg.Add(1)
-				go pf.findPackages(replaceTarget)
+				go pf.findPackages(ctx, replaceTarget)
 				return
 			} else {
-				log.Debug(pf.ctx, "Skipping foreign import", log.Attr("module", _import))
+				log.Debug(ctx, "Skipping foreign import", log.Attr("module", _import))
 				return
 			}
 		}
 		pf.wg.Add(1)
-		go pf.findPackages(filepath.Join(goMod.rootDir, rest))
+		go pf.findPackages(ctx, filepath.Join(goMod.rootDir, rest))
 	}
 
-	log.Debug(pf.ctx, "finding transitive imports",
+	log.Debug(ctx, "finding transitive imports",
 		log.Attr("target", target),
 		log.Attr("imports", pkg.Imports),
 	)
 
-	for _, _import := range pkg.Imports {
-		if searchImport(_import); pf.done.Load() {
-			return
-		}
+	// Check to see if we should stop.
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
 
+	for _, _import := range pkg.Imports {
+		searchImport(_import)
 	}
 
 	if pf.includeTests {
 		for _, _import := range pkg.TestImports {
-			if searchImport(_import); pf.done.Load() {
-				return
-			}
+			searchImport(_import)
 		}
 		for _, _import := range pkg.XTestImports {
-			if searchImport(_import); pf.done.Load() {
-				return
-			}
+			searchImport(_import)
 		}
 	}
 }
