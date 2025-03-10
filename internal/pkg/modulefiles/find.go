@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"golang.org/x/mod/modfile"
@@ -43,9 +44,10 @@ func Find(ctx context.Context, root string, testPaths, modFiles bool) ([]string,
 	}
 
 	if modFiles {
-		for _, m := range modules {
-			errs = append(errs, m.addRootFiles(files))
-		}
+		(*sync.Map)(modules).Range(func(_, m any) bool {
+			errs = append(errs, m.(module).addRootFiles(files))
+			return true
+		})
 		if workspace != nil {
 			errs = append(errs, workspace.addRootFiles(files))
 		}
@@ -94,7 +96,7 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 
 type addFile = func(fileName string)
 
-func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], modules, *goWorkspace, error) {
+func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], *modules, *goWorkspace, error) {
 	modules := modules{}
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
@@ -112,6 +114,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		replaces[r.Old.Path] = filepath.Join(goMod.rootDir, r.New.Path) // Resolve to a better path
 	}
 
+	// Find the go.work, if any and if its not disabled.
 	var goWork *goWorkspace
 	if os.Getenv("GOWORK") == "off" {
 		log.Debug(ctx, "Go workspaces explicitly disabled")
@@ -148,42 +151,82 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		}
 	}
 
+	incoming := make(chan *build.Package, 50)
+
+	ctx, cancel := context.WithCancelCause(ctx)
+
 	finder := packageFinder{
 		replaces:     replaces,
 		includeTests: includeTests,
-		ctx:          ctx,
-		modules:      modules,
-
-		seen: map[string]struct{}{},
+		modules:      &modules,
+		cancel:       cancel,
+		dst:          incoming,
 	}
 
-	return finder.findPackages(root), modules, goWork, nil
+	finder.wg.Add(1)
+	go finder.findPackages(ctx, root)
+
+	// done represents that package finding is still ongoing.
+	//
+	// When done is closed, it indicates that the search should stop
+	go func() { finder.wg.Wait(); cancel(finishedCleanly{}) }()
+
+	return func(yield func(*build.Package, error) bool) {
+		// Make sure to avoid leaking the cancel request.
+		defer cancel(nil)
+
+		for {
+			select {
+			case pkg := <-incoming:
+				if !yield(pkg, nil) {
+					return
+				}
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				_, clean := err.(finishedCleanly)
+				if !clean {
+					yield(nil, err)
+				}
+				return
+			}
+
+		}
+	}, &modules, goWork, nil
 }
 
+type finishedCleanly struct{}
+
+func (finishedCleanly) Error() string { return "finished cleanly" }
+
 type packageFinder struct {
-	ctx context.Context
-
-	// modules is a map from directory names to their enclosing go module
-	modules modules
-
+	// Global state - does not change over time
 	replaces     map[string]string
 	includeTests bool
 
-	// seen is a cache of modules already processed.
-	seen map[string]struct{}
+	// modules is a map from directory names to their enclosing go module
+	modules *modules
 
-	// done indicates the traversal should abort.
-	done bool
+	// seen is a cache of modules already processed.
+	seen sync.Map // Map of string -> struct{}
+
+	dst chan<- *build.Package
+
+	wg sync.WaitGroup
+
+	cancel func(error)
 }
 
-type modules map[string]module
+// A lookup table from directory names to the go module they represent.
+//
+// The underlying map is of string -> module
+type modules sync.Map
 
 type module struct {
 	file    *modfile.File
 	rootDir string
 }
 
-func (m modules) findGoMod(ctx context.Context, root string) (mod module, err error) {
+func (m *modules) findGoMod(ctx context.Context, root string) (mod module, err error) {
 	if m == nil {
 		panic("m should not be nil")
 	}
@@ -194,14 +237,14 @@ func (m modules) findGoMod(ctx context.Context, root string) (mod module, err er
 	for {
 		log.Debug(ctx, "Searching for go.mod", log.Attr("haystack", goModDir))
 		// Check the cache
-		if mod, ok := m[root]; ok {
-			return mod, nil
+		if mod, ok := (*sync.Map)(m).Load(root); ok {
+			return mod.(module), nil
 		}
 
 		// Cache this dir to the module we eventually found.
 		defer func(path string) {
 			if err == nil {
-				m[path] = mod
+				(*sync.Map)(m).Store(path, mod)
 			}
 		}(goModDir)
 
@@ -230,7 +273,7 @@ type goWorkspace struct {
 	rootDir string
 }
 
-func (m modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace, err error) {
+func (m *modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace, err error) {
 	if m == nil {
 		panic("m should not be nil")
 	}
@@ -293,68 +336,73 @@ func (m module) addRootFiles(files map[string]struct{}) error {
 	return nil
 }
 
-func (pf *packageFinder) findPackages(target string) func(yield func(*build.Package, error) bool) {
-	return func(yield func(*build.Package, error) bool) {
-		log.Debug(pf.ctx, "searching for imports of", log.Attr("target", target))
+func (pf *packageFinder) findPackages(ctx context.Context, target string) {
+	log.Debug(ctx, "searching for imports of", log.Attr("target", target))
+	// Decrement the wait grounp associated with this function
+	// call.
+	//
+	// Each call to findPackages should have called pf.wg.Add(1) before starting
+	// findPackages in a background thread.
+	defer pf.wg.Done()
 
-		goMod, err := pf.modules.findGoMod(pf.ctx, target)
-		if err != nil {
-			log.Debug(pf.ctx, "failed to find go.mod for", log.Attr("target", target))
-			yield(nil, err)
-			pf.done = true
+	goMod, err := pf.modules.findGoMod(ctx, target)
+	if err != nil {
+		log.Debug(ctx, "failed to find go.mod for", log.Attr("target", target))
+		pf.cancel(err)
+		return
+	}
+
+	pkg, err := build.Default.ImportDir(target, 0)
+	if err != nil {
+		pf.cancel(err)
+		return
+	}
+	pf.dst <- pkg
+
+	searchImport := func(_import string) {
+		if _, ok := pf.seen.LoadOrStore(_import, struct{}{}); ok {
+			log.Debug(ctx, "Skipping repeated import", log.Attr("module", _import))
 			return
 		}
-
-		pkg, err := build.Default.ImportDir(target, 0)
-		if !yield(pkg, err) || err != nil {
-			pf.done = true
-			return
-		}
-
-		searchImport := func(_import string) {
-			if _, ok := pf.seen[_import]; ok {
-				log.Debug(pf.ctx, "Skipping repeated import", log.Attr("module", _import))
+		rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
+		if !isInModule {
+			if replaceTarget, ok := pf.fromReplace(_import); ok {
+				log.Debug(ctx, "Replacing import",
+					log.Attr("from", _import), log.Attr("to", replaceTarget))
+				pf.wg.Add(1)
+				go pf.findPackages(ctx, replaceTarget)
+				return
+			} else {
+				log.Debug(ctx, "Skipping foreign import", log.Attr("module", _import))
 				return
 			}
-			pf.seen[_import] = struct{}{}
-			rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
-			if !isInModule {
-				if replaceTarget, ok := pf.fromReplace(_import); ok {
-					log.Debug(pf.ctx, "Replacing import",
-						log.Attr("from", _import), log.Attr("to", replaceTarget))
-					pf.findPackages(replaceTarget)(yield)
-					return
-				} else {
-					log.Debug(pf.ctx, "Skipping foreign import", log.Attr("module", _import))
-					return
-				}
-			}
-			pf.findPackages(filepath.Join(goMod.rootDir, rest))(yield)
 		}
+		pf.wg.Add(1)
+		go pf.findPackages(ctx, filepath.Join(goMod.rootDir, rest))
+	}
 
-		log.Debug(pf.ctx, "finding transitive imports",
-			log.Attr("target", target),
-			log.Attr("imports", pkg.Imports),
-		)
+	log.Debug(ctx, "finding transitive imports",
+		log.Attr("target", target),
+		log.Attr("imports", pkg.Imports),
+	)
 
-		for _, _import := range pkg.Imports {
-			if searchImport(_import); pf.done {
-				return
-			}
+	// Check to see if we should stop.
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
 
+	for _, _import := range pkg.Imports {
+		searchImport(_import)
+	}
+
+	if pf.includeTests {
+		for _, _import := range pkg.TestImports {
+			searchImport(_import)
 		}
-
-		if pf.includeTests {
-			for _, _import := range pkg.TestImports {
-				if searchImport(_import); pf.done {
-					return
-				}
-			}
-			for _, _import := range pkg.XTestImports {
-				if searchImport(_import); pf.done {
-					return
-				}
-			}
+		for _, _import := range pkg.XTestImports {
+			searchImport(_import)
 		}
 	}
 }
