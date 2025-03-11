@@ -1,7 +1,6 @@
 package modulefiles
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"path"
@@ -21,6 +20,32 @@ type testFindArgs struct {
 
 	includeTestFiles bool
 	excludeModFiles  bool
+}
+
+func testFind(t *testing.T, args testFindArgs) {
+	t.Helper()
+
+	// Only emit warnings
+	ctx := log.New(t.Context(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelWarn,
+	})))
+
+	tmpDir := t.TempDir()
+
+	// Write files to the temporary directory
+	for path, content := range args.files {
+		fullPath := filepath.Join(tmpDir, path)
+		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+		assert.NoError(t, err)
+		err = os.WriteFile(fullPath, []byte(content), 0644)
+		assert.NoError(t, err)
+	}
+
+	// Run the Find function
+	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles)
+	if assert.NoError(t, err) {
+		assert.ElementsMatch(t, args.expected, display.Relative(ctx, tmpDir, files))
+	}
 }
 
 func TestFindWithGoWorkspaceEnclosingTwoModules(t *testing.T) {
@@ -134,6 +159,58 @@ use ./pkg
 	})
 }
 
+func TestFindWithNestedModuleInsideAnother(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "a",
+		files: map[string]string{
+			"a/go.mod": `module example.com/a
+
+go 1.18
+
+require example.com/b v0.0.0
+
+replace example.com/b => ./b
+`,
+			"a/main.go": `package main
+
+import (
+	"fmt"
+	"example.com/b"
+)
+
+func main() {
+	fmt.Println(b.MessageB())
+}
+`,
+			"a/b/go.mod": `module example.com/b
+
+go 1.18
+`,
+			"a/b/b.go": `package b
+
+func MessageB() string {
+	return "Hello from nested Module B"
+}
+`,
+			"go.work": `go 1.18
+
+use ./a
+use ./a/b
+`,
+			"go.work.sum": ``,
+		},
+		expected: []string{
+			"a/go.mod",
+			"a/main.go",
+			"a/b/go.mod",
+			"a/b/b.go",
+			"go.work",
+			"go.work.sum",
+		},
+	})
+}
+
 func TestFindNestedModules(t *testing.T) {
 	t.Parallel()
 	testFind(t, testFindArgs{
@@ -176,32 +253,6 @@ func Message() string {
 			"pkg1/pkg2/pkg.go",
 		},
 	})
-}
-
-func testFind(t *testing.T, args testFindArgs) {
-	t.Helper()
-
-	// Only emit warnings
-	ctx := log.New(context.Background(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
-	})))
-
-	tmpDir := t.TempDir()
-
-	// Write files to the temporary directory
-	for path, content := range args.files {
-		fullPath := filepath.Join(tmpDir, path)
-		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
-		assert.NoError(t, err)
-		err = os.WriteFile(fullPath, []byte(content), 0644)
-		assert.NoError(t, err)
-	}
-
-	// Run the Find function
-	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles)
-	if assert.NoError(t, err) {
-		assert.ElementsMatch(t, args.expected, display.Relative(ctx, tmpDir, files))
-	}
 }
 
 func TestFindSinglePackage(t *testing.T) {
@@ -457,6 +508,132 @@ func Message() string {
 			"pkg1/main.go",
 			"pkg2/go.mod",
 			"pkg2/pkg.go",
+		},
+	})
+}
+
+func TestFindMultipleGoFilesInDirectory(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		files: map[string]string{
+			"go.mod": `module example.com/multi
+
+go 1.18
+`,
+			"main.go": `package main
+
+import (
+	"fmt"
+	"example.com/multi/utility"
+)
+
+func main() {
+	fmt.Println(Greet())
+	fmt.Println(HelpMessage())
+
+	// Use a function from the local dependency
+	fmt.Println(utility.UtilityMessage())
+}
+`,
+			"util.go": `package main
+
+func Greet() string { return "Hello from util!" }
+`,
+			"helper.go": `package main
+
+func HelpMessage() string { return "This is a help message from helper." }
+`,
+			"utility/utils.go": `package utility
+
+func UtilityMessage() string { return "This is a message from the utility package." }
+`,
+			"utility/moreutils.go": `package utility
+
+func MoreUtility() string {r eturn "This is another utility function." }
+`,
+		},
+		expected: []string{
+			"go.mod",
+			"main.go",
+			"util.go",
+			"helper.go",
+			"utility/utils.go",
+			"utility/moreutils.go",
+		},
+	})
+}
+
+func TestFindExcludeNonGoFiles(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		files: map[string]string{
+			"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+			"main.go": `package main
+
+import (
+	"fmt"
+	"example.com/testmod/pkg"
+)
+
+func main() {
+	fmt.Println(pkg.Message())
+}
+`,
+			"pkg/pkg.go": `package pkg
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+			"README.md": `# This is the README for example.com/testmod
+`,
+			"LICENSE": `<LICENSE>
+`,
+		},
+		expected: []string{
+			"go.mod",
+			"main.go",
+			"pkg/pkg.go",
+		},
+	})
+}
+
+func TestFindWithExternalDependencies(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		files: map[string]string{
+			"go.mod": `module example.com/testmod
+
+go 1.18
+
+require github.com/some/external/pkg v1.2.3
+`,
+			"main.go": `package main
+
+import (
+	"fmt"
+
+	"example.com/testmod/localpkg"
+)
+
+func main() {
+	fmt.Println(localpkg.Message())
+}
+`,
+			"localpkg/pkg.go": `package localpkg
+
+func Message() string {n
+	return "Hello from localpkg!"
+}
+`,
+		},
+		expected: []string{
+			"go.mod",
+			"main.go",
+			"localpkg/pkg.go",
 		},
 	})
 }
