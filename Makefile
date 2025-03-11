@@ -14,9 +14,14 @@ test:
 
 .PHONY: benchmark
 benchmark: build tmp/helpmakego-main/bin/helpmakego \
-		.make/tmp/pulumi
+		.make/tmp/pulumi \
+		.make/tmp/kubernetes
+
+	cd tmp/helpmakego-main && git pull
+	make -C tmp/helpmakego-main build
 
 	$(call bench,tmp/pulumi/pkg/cmd/pulumi)
+	$(call bench,tmp/kubernetes/cmd/kubectl)
 
 define bench
 	hyperfine --warmup 5 \
@@ -27,12 +32,17 @@ endef
 tmp/helpmakego-main/bin/helpmakego:
 	@mkdir -p tmp
 	git clone --depth=1 --branch main "https://github.com/iwahbe/helpmakego.git" tmp/helpmakego-main
-	make -C tmp/helpmakego-main build
 
 .make/tmp/pulumi:
 	@mkdir -p .make/tmp/
 	rm -rf tmp/pulumi
 	git clone --depth=1 --branch v3.154.0 "https://github.com/pulumi/pulumi.git" tmp/pulumi
+	@touch $@
+
+.make/tmp/kubernetes:
+	@mkdir -p .make/tmp/
+	rm -rf tmp/kubernetes
+	git clone --depth=1 --branch v1.32.2 "https://github.com/kubernetes/kubernetes.git" tmp/kubernetes
 	@touch $@
 
 clean:
