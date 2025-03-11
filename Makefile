@@ -10,7 +10,7 @@ lint:
 	golangci-lint run
 
 test:
-	go test -v ./...
+	go test -race -v ./...
 
 .PHONY: benchmark
 benchmark: build tmp/helpmakego-main/bin/helpmakego \
