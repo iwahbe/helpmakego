@@ -659,3 +659,91 @@ use ./module_c
 		},
 	})
 }
+
+func TestSimilarReplaces(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "pkg1",
+		files: map[string]string{
+			"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+
+require example.com/pkg2 v0.0.0
+
+replace example.com/pkg2 => ../pkg2
+replace example.com/pkg2nested => ../pkg2nested
+`,
+			"pkg1/main.go": `package main
+
+import (
+	"example.com/pkg2"
+	"example.com/pkg2nested"
+)
+
+func main() { pkg2.Message(); pkg2nested.Message() }
+`,
+			"pkg2/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+			"pkg2/pkg.go": `package pkg2
+
+func Message() string {}
+`,
+			"pkg2nested/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+			"pkg2nested/pkg.go": `package pkg2nested
+
+func Message() string {}
+`,
+		},
+		expected: []string{
+			"pkg1/go.mod",
+			"pkg1/main.go",
+			"pkg2/go.mod",
+			"pkg2/pkg.go",
+			"pkg2nested/go.mod",
+			"pkg2nested/pkg.go",
+		},
+	})
+}
+
+func TestReplaces(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		_import, from, expected string
+		covers                  bool
+	}{
+		{
+			_import: "k8s.io/apimachinery/pkg/util/net", from: "k8s.io/api",
+			covers: false,
+		},
+		{
+			_import: "k8s.io/apimachinery/pkg/util/net", from: "k8s.io/apimachinery",
+			covers: true, expected: "pkg/util/net",
+		},
+		{
+			_import: "github.com/example/foo", from: "github.com/example/foo/bar",
+			covers: false,
+		},
+		{
+			_import: "github.com/example/foo/bar", from: "github.com/example/foo",
+			covers: true, expected: "bar",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt._import+" "+tt.from, func(t *testing.T) {
+			t.Parallel()
+
+			actual, covers := replaces(tt._import, tt.from)
+			if assert.Equal(t, tt.covers, covers) {
+				assert.Equal(t, tt.expected, actual)
+			}
+		})
+	}
+}
