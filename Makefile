@@ -1,3 +1,4 @@
+.PHONY: build
 build: bin/helpmakego
 
 # We don't want to do this, but we don't want to depend on helpmakego to build helpmakego
@@ -13,7 +14,7 @@ test:
 	go test -race -v ./...
 
 .PHONY: benchmark
-benchmark: build tmp/helpmakego-main/bin/helpmakego \
+benchmark: bin/helpmakego tmp/helpmakego-main/bin/helpmakego \
 		.make/tmp/pulumi \
 		.make/tmp/kubernetes
 
