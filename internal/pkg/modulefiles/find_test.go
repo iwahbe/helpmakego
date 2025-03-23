@@ -60,12 +60,11 @@ go 1.18
 			"pkg1/main.go": `package main
 
 import (
-	"fmt"
 	"example.com/pkg2"
 )
 
 func main() {
-	fmt.Println(pkg2.Message())
+	pkg2.Message()
 }
 `,
 			"pkg2/go.mod": `module example.com/pkg2
@@ -106,11 +105,7 @@ go 1.18
 `,
 			"main.go": `package main
 
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}
+func main() {}
 `,
 			"go.work": `go 1.18
 
@@ -138,11 +133,7 @@ go 1.18
 `,
 			"pkg/main.go": `package main
 
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}
+func main() {}
 `,
 			"go.work": `go 1.18
 
@@ -175,12 +166,11 @@ replace example.com/b => ./b
 			"a/main.go": `package main
 
 import (
-	"fmt"
 	"example.com/b"
 )
 
 func main() {
-	fmt.Println(b.MessageB())
+	b.MessageB()
 }
 `,
 			"a/b/go.mod": `module example.com/b
@@ -227,12 +217,11 @@ replace example.com/pkg2 => ./pkg2
 			"pkg1/main.go": `package main
 
 import (
-	"fmt"
 	"example.com/pkg2"
 )
 
 func main() {
-	fmt.Println(pkg2.Message())
+	pkg2.Message()
 }
 `,
 			"pkg1/pkg2/go.mod": `module example.com/pkg2
@@ -265,11 +254,7 @@ go 1.18
 `,
 			"main.go": `package main
 
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}
+func main() {}
 `,
 		},
 		expected: []string{
@@ -290,11 +275,7 @@ go 1.18
 `,
 			"main.go": `package main
 
-import "fmt"
-
-func main() {
-	fmt.Println("Hello, World!")
-}
+func main() {}
 `,
 		},
 		expected: []string{
@@ -314,13 +295,10 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/testmod/pkg"
 )
 
-func main() {
-	fmt.Println(pkg.Message())
-}
+func main() { pkg.Message() }
 `,
 			"pkg/pkg.go": `package pkg
 
@@ -349,13 +327,10 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/testmod/pkg"
 )
 
-func main() {
-	fmt.Println(pkg.Message())
-}
+func main() { pkg.Message() }
 `,
 			"pkg/pkg.go": `package pkg
 
@@ -394,13 +369,10 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/testmod/pkg"
 )
 
-func main() {
-	fmt.Println(pkg.Message())
-}
+func main() { pkg.Message() }
 `,
 			"pkg/pkg.go": `package pkg
 
@@ -439,13 +411,10 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/testmod/pkg1"
 )
 
-func main() {
-	fmt.Println(pkg.Message())
-}
+func main() { pkg.Message() }
 `,
 			"pkg1/pkg.go": `package pkg1
 
@@ -484,13 +453,10 @@ replace example.com/pkg2 => ../pkg2
 			"pkg1/main.go": `package main
 
 import (
-	"fmt"
 	"example.com/pkg2"
 )
 
-func main() {
-	fmt.Println(pkg2.Message())
-}
+func main() { pkg2.Message() }
 `,
 			"pkg2/go.mod": `module example.com/pkg2
 
@@ -523,16 +489,13 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/multi/utility"
 )
 
 func main() {
-	fmt.Println(Greet())
-	fmt.Println(HelpMessage())
-
-	// Use a function from the local dependency
-	fmt.Println(utility.UtilityMessage())
+	Greet()
+	HelpMessage()
+	utility.UtilityMessage()
 }
 `,
 			"util.go": `package main
@@ -574,13 +537,10 @@ go 1.18
 			"main.go": `package main
 
 import (
-	"fmt"
 	"example.com/testmod/pkg"
 )
 
-func main() {
-	fmt.Println(pkg.Message())
-}
+func main() { pkg.Message() }
 `,
 			"pkg/pkg.go": `package pkg
 
@@ -614,14 +574,10 @@ require github.com/some/external/pkg v1.2.3
 			"main.go": `package main
 
 import (
-	"fmt"
-
 	"example.com/testmod/localpkg"
 )
 
-func main() {
-	fmt.Println(localpkg.Message())
-}
+func main() { localpkg.Message() }
 `,
 			"localpkg/pkg.go": `package localpkg
 
@@ -634,6 +590,72 @@ func Message() string {n
 			"go.mod",
 			"main.go",
 			"localpkg/pkg.go",
+		},
+	})
+}
+
+func TestNestedGoWorkDependency(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "module_a",
+		files: map[string]string{
+			"module_a/go.mod": `module example.com/module_a
+
+go 1.18
+
+require example.com/module_b v0.0.0
+
+`,
+			"module_a/main.go": `package main
+
+import (
+	"example.com/module_b"
+)
+
+func main() { module_b.BMessage() }
+`,
+			"module_b/go.mod": `module example.com/module_b
+
+go 1.18
+
+require example.com/module_c v0.0.0
+
+`,
+			"module_b/b.go": `package module_b
+
+import "example.com/module_c"
+
+func BMessage() string {
+	return "From B: " + module_c.CMessage()
+}
+`,
+			"module_c/go.mod": `module example.com/module_c
+
+go 1.18
+`,
+			"module_c/c.go": `package module_c
+
+func CMessage() string {
+	return "Greetings from module C"
+}
+`,
+			"go.work": `go 1.18
+
+use ./module_a
+use ./module_b
+use ./module_c
+`,
+			"go.work.sum": ``,
+		},
+		expected: []string{
+			"module_a/go.mod",
+			"module_a/main.go",
+			"module_b/go.mod",
+			"module_b/b.go",
+			"module_c/go.mod",
+			"module_c/c.go",
+			"go.work",
+			"go.work.sum",
 		},
 	})
 }
