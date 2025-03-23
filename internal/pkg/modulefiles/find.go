@@ -156,8 +156,19 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 
 	ctx, cancel := context.WithCancelCause(ctx)
 
+	_replaces := make([]replace, 0, len(replaces))
+	for k, v := range replaces {
+		_replaces = append(_replaces, replace{
+			from: k, to: v,
+		})
+	}
+	slices.SortFunc(_replaces, func(a, b replace) int {
+		// this is a reverse sort on .from
+		return strings.Compare(b.from, a.from)
+	})
+
 	finder := packageFinder{
-		replaces:     replaces,
+		replaces:     _replaces,
 		includeTests: includeTests,
 		modules:      &modules,
 		cancel:       cancel,
@@ -201,8 +212,13 @@ func (finishedCleanly) Error() string { return "finished cleanly" }
 
 type packageFinder struct {
 	// Global state - does not change over time
-	replaces     map[string]string
+
+	// replaces must be sorted (longest to shortest) on .from so a linear search will
+	// pick up the correct module first.
+	replaces     []replace
 	includeTests bool
+
+	// Local state, may mutate and thus must be safe to mutate in parallel.
 
 	// modules is a map from directory names to their enclosing go module
 	modules *modules
@@ -216,6 +232,8 @@ type packageFinder struct {
 
 	cancel func(error)
 }
+
+type replace struct{ from, to string }
 
 // A lookup table from directory names to the go module they represent.
 //
@@ -414,12 +432,12 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 }
 
 func (pf *packageFinder) fromReplace(_import string) (string, bool) {
-	for mod, newPath := range pf.replaces {
-		rest, ok := moduleCovers(_import, mod)
+	for _, replace := range pf.replaces {
+		rest, ok := moduleCovers(_import, replace.from)
 		if !ok {
 			continue
 		}
-		return filepath.Join(newPath, rest), true
+		return filepath.Join(replace.to, rest), true
 	}
 	return "", false
 }

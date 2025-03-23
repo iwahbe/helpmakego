@@ -35,10 +35,8 @@ func testFind(t *testing.T, args testFindArgs) {
 	// Write files to the temporary directory
 	for path, content := range args.files {
 		fullPath := filepath.Join(tmpDir, path)
-		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
-		assert.NoError(t, err)
-		err = os.WriteFile(fullPath, []byte(content), 0644)
-		assert.NoError(t, err)
+		assert.NoError(t, os.MkdirAll(filepath.Dir(fullPath), 0755))
+		assert.NoError(t, os.WriteFile(fullPath, []byte(content), 0644))
 	}
 
 	// Run the Find function
@@ -735,6 +733,59 @@ func main() { pkg1nested.Message(); pkg2nested.Message() }
 		expected: []string{
 			"pkg1/go.mod",
 			"pkg1/main.go",
+		},
+	})
+}
+
+// TestOverlappingReplaces tests that given two replaces where one covers another, we will
+// use the most specific replace.
+func TestOverlappingReplaces(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "pkg1",
+		files: map[string]string{
+			"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+
+require example.com/pkg2 v0.0.0
+
+replace example.com/pkg2/ => ../pkg2
+replace example.com/pkg2/nested => ../pkg2nested
+`,
+			"pkg1/main.go": `package main
+
+import (
+	"example.com/pkg2"
+	"example.com/pkg2/nested"
+)
+
+func main() { pkg2.Message(); nested.Message() }
+`,
+			"pkg2/go.mod": `module example.com/pkg2
+
+go 1.18
+`,
+			"pkg2/pkg.go": `package pkg2
+
+func Message() string {}
+`,
+			"pkg2nested/go.mod": `module example.com/pkg2/nested
+
+go 1.18
+`,
+			"pkg2nested/pkg.go": `package nested
+
+func Message() string {}
+`,
+		},
+		expected: []string{
+			"pkg1/go.mod",
+			"pkg1/main.go",
+			"pkg2/go.mod",
+			"pkg2/pkg.go",
+			"pkg2nested/go.mod",
+			"pkg2nested/pkg.go",
 		},
 	})
 }
