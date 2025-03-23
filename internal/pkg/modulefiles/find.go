@@ -354,7 +354,13 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string) {
 
 	pkg, err := build.Default.ImportDir(target, 0)
 	if err != nil {
-		pf.cancel(err)
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			log.Error(ctx, "Targeted missing directory, maybe a replace was missed")
+			pf.cancel(fmt.Errorf("referenced target %q does not exist: %w", target, err))
+			return
+		}
+
+		pf.cancel(fmt.Errorf("cannot import dir: %w", err))
 		return
 	}
 	pf.dst <- pkg
