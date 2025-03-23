@@ -111,6 +111,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 		if !modfile.IsDirectoryPath(r.New.Path) {
 			continue
 		}
+		log.Info(ctx, "Added replace", log.Attr("from", r.Old.Path), log.Attr("to", r.New.Path))
 		replaces[r.Old.Path] = filepath.Join(goMod.rootDir, r.New.Path) // Resolve to a better path
 	}
 
@@ -164,7 +165,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 	}
 
 	finder.wg.Add(1)
-	go finder.findPackages(ctx, root)
+	go finder.findPackages(ctx, root, "")
 
 	// done represents that package finding is still ongoing.
 	//
@@ -231,7 +232,7 @@ func (m *modules) findGoMod(ctx context.Context, root string) (mod module, err e
 		panic("m should not be nil")
 	}
 
-	log.Info(ctx, "Searching for go.mod", log.Attr("root", root))
+	log.Debug(ctx, "Searching for go.mod", log.Attr("root", root))
 	goModDir := root
 	var goModBytes []byte
 	for {
@@ -336,7 +337,7 @@ func (m module) addRootFiles(files map[string]struct{}) error {
 	return nil
 }
 
-func (pf *packageFinder) findPackages(ctx context.Context, target string) {
+func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgName string) {
 	log.Debug(ctx, "searching for imports of", log.Attr("target", target))
 	// Decrement the wait grounp associated with this function
 	// call.
@@ -355,8 +356,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string) {
 	pkg, err := build.Default.ImportDir(target, 0)
 	if err != nil {
 		if _, err := os.Stat(target); os.IsNotExist(err) {
-			log.Error(ctx, "Targeted missing directory, maybe a replace was missed")
-			pf.cancel(fmt.Errorf("referenced target %q does not exist: %w", target, err))
+			pf.cancel(fmt.Errorf("referenced package %q was not found: expected to be at %q", pkgName, target))
 			return
 		}
 
@@ -376,7 +376,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string) {
 				log.Debug(ctx, "Replacing import",
 					log.Attr("from", _import), log.Attr("to", replaceTarget))
 				pf.wg.Add(1)
-				go pf.findPackages(ctx, replaceTarget)
+				go pf.findPackages(ctx, replaceTarget, _import)
 				return
 			} else {
 				log.Debug(ctx, "Skipping foreign import", log.Attr("module", _import))
@@ -384,7 +384,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string) {
 			}
 		}
 		pf.wg.Add(1)
-		go pf.findPackages(ctx, filepath.Join(goMod.rootDir, rest))
+		go pf.findPackages(ctx, filepath.Join(goMod.rootDir, rest), _import)
 	}
 
 	log.Debug(ctx, "finding transitive imports",
@@ -415,11 +415,44 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string) {
 
 func (pf *packageFinder) fromReplace(_import string) (string, bool) {
 	for mod, newPath := range pf.replaces {
-		rest, ok := strings.CutPrefix(_import, mod)
+		rest, ok := replaces(_import, mod)
 		if !ok {
 			continue
 		}
 		return filepath.Join(newPath, rest), true
 	}
 	return "", false
+}
+
+// replaces should be used to check if _import should be covered by the module path from.
+//
+// It will return the non-covered suffix and true if _import should be covered by from.
+// It will return ("", false) otherwise.
+//
+// This function is necessary (as opposed to [strings.CutPrefix]) to handle distinguishing
+// between replaces such as:
+//
+//	k8s.io/api => ./staging/src/k8s.io/api
+//	k8s.io/apiextensions-apiserver => ./staging/src/k8s.io/apiextensions-apiserver
+//	k8s.io/apimachinery => ./staging/src/k8s.io/apimachinery
+//
+// All prefixes start with "k8s.io/api", which is also a valid replace.
+func replaces(_import, from string) (string, bool) {
+	chomp := func(path string) (string, string) {
+		i := strings.IndexByte(path, '/')
+		if i < 0 {
+			return path, ""
+		}
+		return path[:i], path[i+1:]
+	}
+
+	for from != "" {
+		var c1, c2 string
+		c1, _import = chomp(_import)
+		c2, from = chomp(from)
+		if c1 != c2 {
+			return "", false
+		}
+	}
+	return _import, true
 }
