@@ -370,7 +370,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 			log.Debug(ctx, "Skipping repeated import", log.Attr("module", _import))
 			return
 		}
-		rest, isInModule := strings.CutPrefix(_import, goMod.file.Module.Mod.Path)
+		rest, isInModule := moduleCovers(_import, goMod.file.Module.Mod.Path)
 		if !isInModule {
 			if replaceTarget, ok := pf.fromReplace(_import); ok {
 				log.Debug(ctx, "Replacing import",
@@ -415,7 +415,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 
 func (pf *packageFinder) fromReplace(_import string) (string, bool) {
 	for mod, newPath := range pf.replaces {
-		rest, ok := replaces(_import, mod)
+		rest, ok := moduleCovers(_import, mod)
 		if !ok {
 			continue
 		}
@@ -424,20 +424,20 @@ func (pf *packageFinder) fromReplace(_import string) (string, bool) {
 	return "", false
 }
 
-// replaces should be used to check if _import should be covered by the module path from.
+// moduleCovers should be used to check if _import should be covered by the module path from.
 //
 // It will return the non-covered suffix and true if _import should be covered by from.
 // It will return ("", false) otherwise.
 //
 // This function is necessary (as opposed to [strings.CutPrefix]) to handle distinguishing
-// between replaces such as:
+// between moduleCovers such as:
 //
 //	k8s.io/api => ./staging/src/k8s.io/api
 //	k8s.io/apiextensions-apiserver => ./staging/src/k8s.io/apiextensions-apiserver
 //	k8s.io/apimachinery => ./staging/src/k8s.io/apimachinery
 //
 // All prefixes start with "k8s.io/api", which is also a valid replace.
-func replaces(_import, from string) (string, bool) {
+func moduleCovers(_import, from string) (string, bool) {
 	chomp := func(path string) (string, string) {
 		i := strings.IndexByte(path, '/')
 		if i < 0 {

@@ -711,7 +711,35 @@ func Message() string {}
 	})
 }
 
-func TestReplaces(t *testing.T) {
+func TestSimilarModules(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		runDir: "pkg1",
+		files: map[string]string{
+			"pkg1/go.mod": `module example.com/pkg1
+
+go 1.18
+
+require example.com/pkg1neested v0.0.0
+
+`,
+			"pkg1/main.go": `package main
+
+import (
+	"example.com/pkg1nested"
+)
+
+func main() { pkg1nested.Message(); pkg2nested.Message() }
+`,
+		},
+		expected: []string{
+			"pkg1/go.mod",
+			"pkg1/main.go",
+		},
+	})
+}
+
+func TestModuleCovers(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -740,7 +768,7 @@ func TestReplaces(t *testing.T) {
 		t.Run(tt._import+" "+tt.from, func(t *testing.T) {
 			t.Parallel()
 
-			actual, covers := replaces(tt._import, tt.from)
+			actual, covers := moduleCovers(tt._import, tt.from)
 			if assert.Equal(t, tt.covers, covers) {
 				assert.Equal(t, tt.expected, actual)
 			}
