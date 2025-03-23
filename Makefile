@@ -10,8 +10,9 @@ bin/helpmakego: $(shell find . -name '*.go') go.mod go.sum
 lint:
 	golangci-lint run
 
+.PHONY: test
 test:
-	go test -race -v ./...
+	go test -race -count 1 -v ./...
 
 .PHONY: benchmark
 benchmark: bin/helpmakego tmp/helpmakego-main/bin/helpmakego \
