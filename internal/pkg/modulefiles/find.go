@@ -178,10 +178,10 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 	finder.wg.Add(1)
 	go finder.findPackages(ctx, root, "")
 
-	// done represents that package finding is still ongoing.
+	// Close incoming when we have indicated that no more
 	//
-	// When done is closed, it indicates that the search should stop
-	go func() { finder.wg.Wait(); cancel(finishedCleanly{}) }()
+	// This allows the iterator to detect when it should exit.
+	go func() { finder.wg.Wait(); close(incoming) }()
 
 	return func(yield func(*build.Package, error) bool) {
 		// Make sure to avoid leaking the cancel request.
@@ -189,26 +189,27 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 
 		for {
 			select {
-			case pkg := <-incoming:
+			case pkg, ok := <-incoming:
+				if !ok {
+					// We must be done, since incoming was closed.
+					//
+					// We check to make sure if we are done because of
+					// an error, we report it.
+					if err := context.Cause(ctx); err != nil {
+						yield(nil, err)
+					}
+					return
+				}
 				if !yield(pkg, nil) {
 					return
 				}
-			case <-ctx.Done():
-				err := context.Cause(ctx)
-				_, clean := err.(finishedCleanly)
-				if !clean {
-					yield(nil, err)
-				}
+			case <-ctx.Done(): // The context was canceled, so yield the error and exit.
+				yield(nil, context.Cause(ctx))
 				return
 			}
-
 		}
 	}, &modules, goWork, nil
 }
-
-type finishedCleanly struct{}
-
-func (finishedCleanly) Error() string { return "finished cleanly" }
 
 type packageFinder struct {
 	// Global state - does not change over time
