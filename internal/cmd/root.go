@@ -23,6 +23,7 @@ func Root() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.MaximumNArgs(1),
 	}
+	cmd.AddCommand(deamon())
 
 	includeTest := cmd.Flags().Bool("test", false, "include test files in the dependency analysis")
 	outputJSON := cmd.Flags().Bool("json", false, "output source files as a a JSON array")
@@ -32,18 +33,18 @@ func Root() *cobra.Command {
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
-		var modRoot string
+		var pkgPath string
 		if len(args) == 0 {
 			wd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			modRoot = wd
+			pkgPath = wd
 		} else {
-			modRoot = args[0]
+			pkgPath = args[0]
 		}
 
-		modRoot, err := filepath.Abs(modRoot)
+		pkgPath, err := filepath.Abs(pkgPath)
 		if err != nil {
 			return err
 		}
@@ -68,7 +69,7 @@ func Root() *cobra.Command {
 			log.Warn(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
 		}
 
-		paths, err := modulefiles.Find(ctx, modRoot, *includeTest, *includeMod)
+		paths, err := modulefiles.Find(ctx, pkgPath, *includeTest, *includeMod)
 		if err != nil {
 			return err
 		}
