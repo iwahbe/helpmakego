@@ -21,9 +21,13 @@ import (
 // Serve a deamon to maintain the cache in the background.
 //
 // It lives for 5 seconds.
-func Serve(ctx context.Context, moduleRoot string) error {
-	path := socketPath(moduleRoot)
-	err := os.Remove(path)
+func Serve(ctx context.Context, pkgRoot string) error {
+	cache, err := modulefiles.NewCache(ctx, pkgRoot)
+	if err != nil {
+		return err
+	}
+	path := socketPath(cache.ModuleRoot())
+	err = os.Remove(path)
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -32,14 +36,19 @@ func Serve(ctx context.Context, moduleRoot string) error {
 	if err != nil {
 		return fmt.Errorf("failed to bind: %w", err)
 	}
-	defer listner.Close()
+	defer func() { _ = listner.Close() }()
 
-	// We should clean up the deamon after no new requests for 5 seconds.
-	if err := listner.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		return fmt.Errorf("failed set listener deadline: %w", err)
+	// setDeadline gives a 5 second grace period for waiting for the next connection.
+	setDeadline := func() error {
+		if err := listner.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			return fmt.Errorf("failed set listener deadline: %w", err)
+		}
+		return nil
 	}
 
-	cache := modulefiles.NewCache(moduleRoot)
+	if err := setDeadline(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 	for {
@@ -55,20 +64,24 @@ func Serve(ctx context.Context, moduleRoot string) error {
 			defer wg.Done()
 			handle(ctx, cache, conn)
 		}()
+		if err := setDeadline(); err != nil {
+			return err
+		}
 	}
 }
 
 func start(ctx context.Context, moduleRoot string) {
-	cmd := exec.CommandContext(context.WithoutCancel(ctx), os.Args[0], "deamon")
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), os.Args[0], "--x-deamon", moduleRoot)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Noctty: true,
+		Setpgid: true,
+		Pgid:    0,
 	}
 	if err := cmd.Start(); err != nil {
-		log.Warn(ctx, "failed to start deamon: %s", err)
+		log.Warn(ctx, fmt.Sprintf("failed to start deamon: %s", err))
 		return
 	}
 	if err := cmd.Process.Release(); err != nil {
-		log.Warn(ctx, "failed to release deamon: %s", err)
+		log.Warn(ctx, fmt.Sprintf("failed to release deamon: %s", err))
 	}
 }
 
@@ -77,26 +90,30 @@ func socketPath(moduleRoot string) string {
 	return "/tmp/helpmakego-" + encoded + ".sock"
 }
 
-func Find(ctx context.Context, pkgRoot string, includeTests, includeMod bool) ([]string, error) {
-	moduleRoot, err := modulefiles.FindModuleRoot(pkgRoot)
+// Find delegates a find call to the running deamon, or it executes the call locally and
+// while starting the deamon.
+func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork bool) ([]string, error) {
+	moduleRoot, err := modulefiles.FindModuleRoot(ctx, pkgRoot)
 	if err != nil {
 		return nil, err
 	}
 	socketPath := socketPath(moduleRoot)
+	ctx = log.WithAttr(ctx, "socket", socketPath)
 	conn, err := net.Dial("unix", socketPath)
 	switch {
 	case err == nil:
+		log.Info(ctx, "connected to existing server")
 	case strings.Contains(err.Error(), "connection refused"):
 		log.Info(ctx, "restarting deamon at %s", socketPath)
-		os.Remove(socketPath)
+		_ = os.Remove(socketPath)
 		fallthrough
 	case errors.Is(err, os.ErrNotExist):
 		go start(ctx, moduleRoot) // Start the deamon in the background for the next invocation
-		log.Info(ctx, "starting deamon for next run at %s", socketPath)
-		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod)
+		log.Info(ctx, "starting deamon for next run")
+		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
 	case errors.Is(err, os.ErrPermission):
-		log.Warn(ctx, "permission denied to start deamon: %s", err.Error())
-		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod)
+		log.Warn(ctx, "permission denied to start deamon", log.Attr("error", err.Error()))
+		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
 	default:
 		return nil, fmt.Errorf("unexpected dial error for find deamon: %w", err)
 	}
@@ -140,7 +157,7 @@ func handle(ctx context.Context, cache modulefiles.Cache, conn net.Conn) {
 	}
 
 	// Execute find from the shared cache
-	files, err := cache.Find(ctx, req.PathToPackage, req.IncludeTest, req.IncludeMod)
+	files, err := cache.Find(ctx, req.PathToPackage, req.IncludeTest, req.IncludeMod, req.GoWork)
 
 	// Write the response
 	enc := json.NewEncoder(conn)
@@ -160,8 +177,9 @@ func handle(ctx context.Context, cache modulefiles.Cache, conn net.Conn) {
 
 type request struct {
 	PathToPackage string `json:"pathToPackage"`
-	IncludeTest   bool   `json:"includeTest,omitzero"`
-	IncludeMod    bool   `json:"includeMod,omitzero"`
+	IncludeTest   bool   `json:"includeTest"`
+	IncludeMod    bool   `json:"includeMod"`
+	GoWork        bool   `json:"goWork"`
 }
 
 type response struct {

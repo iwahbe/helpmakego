@@ -11,24 +11,29 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/iwahbe/helpmakego/internal/pkg/deamon"
 	"github.com/iwahbe/helpmakego/internal/pkg/display"
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
+var useDeamon = isTruthy(os.Getenv("HELPMAKEGO_EXPIREMENT_DEAMON"))
+
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "helpmakego [path-to-package] [--test]",
+		Use:          "helpmakego [path-to-package] [--test] [--abs] [--mod]",
 		Short:        "Find all files a Go package depends on - suitable for Make",
 		SilenceUsage: true,
 		Args:         cobra.MaximumNArgs(1),
 	}
-	cmd.AddCommand(deamon())
 
 	includeTest := cmd.Flags().Bool("test", false, "include test files in the dependency analysis")
 	outputJSON := cmd.Flags().Bool("json", false, "output source files as a a JSON array")
 	absolutePaths := cmd.Flags().Bool("abs", false, "output absolute paths instead of relative paths")
 	includeMod := cmd.Flags().Bool("mod", true, "include module files in the result")
+
+	isDeamon := cmd.Flags().Bool("x-deamon", false, "do not run the normal process, run as a deamon")
+	cmd.Flag("x-deamon").Hidden = true
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
@@ -69,7 +74,18 @@ func Root() *cobra.Command {
 			log.Warn(ctx, `invalid log level %q: valid options are "error", "warn", "info" and "debug"`)
 		}
 
-		paths, err := modulefiles.Find(ctx, pkgPath, *includeTest, *includeMod)
+		// This should only be set by another invocation of helpmakego, and is not
+		// designed to be called by users.
+		if *isDeamon {
+			return deamon.Serve(ctx, pkgPath)
+		}
+
+		find := modulefiles.Find
+		if useDeamon {
+			find = deamon.Find
+		}
+
+		paths, err := find(ctx, pkgPath, *includeTest, *includeMod, os.Getenv("GOWORK") != "off")
 		if err != nil {
 			return err
 		}
@@ -92,3 +108,5 @@ func Root() *cobra.Command {
 
 	return cmd
 }
+
+func isTruthy(s string) bool { return strings.EqualFold(s, "true") || s == "1" }

@@ -39,7 +39,9 @@ func Error(ctx context.Context, msg string, args ...any) {
 	getLogger(ctx).ErrorContext(ctx, msg, args...)
 }
 
-func Attr[T interface{ string | int | []string }](key string, value T) slog.Attr {
+type intoAttr interface{ string | int | []string }
+
+func Attr[T intoAttr](key string, value T) slog.Attr {
 	switch value := any(value).(type) {
 	case string:
 		return slog.String(key, value)
@@ -50,4 +52,9 @@ func Attr[T interface{ string | int | []string }](key string, value T) slog.Attr
 	default:
 		panic("impossible")
 	}
+}
+
+// Equip the context with an attribute.
+func WithAttr[T intoAttr](ctx context.Context, key string, value T) context.Context {
+	return New(ctx, getLogger(ctx).With(Attr(key, value)))
 }

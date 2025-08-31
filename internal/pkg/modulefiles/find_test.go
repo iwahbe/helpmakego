@@ -40,7 +40,7 @@ func testFind(t *testing.T, args testFindArgs) {
 	}
 
 	// Run the Find function
-	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles)
+	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles, true /* GOWORK != off */)
 	if assert.NoError(t, err) {
 		assert.ElementsMatch(t, args.expected, display.Relative(ctx, tmpDir, files))
 	}

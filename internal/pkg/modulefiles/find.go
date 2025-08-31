@@ -18,15 +18,20 @@ import (
 )
 
 // Find the set of files that are depended on by the package at root.
-func Find(ctx context.Context, root string, testPaths, modFiles bool) ([]string, error) {
+func Find(ctx context.Context, root string, testPaths, modFiles, goWork bool) ([]string, error) {
+	return findWithModules(ctx, root, testPaths, modFiles, goWork, new(modules))
+}
+
+// Find the set of files that are depended on by the package at root.
+func findWithModules(ctx context.Context, root string, testPaths, modFiles, goWork bool, modules *modules) ([]string, error) {
 	var errs []error
 
 	files := map[string]struct{}{}
 	if os.Getenv("GO111MODULE") == "off" {
-		return nil, fmt.Errorf("Go modules disabled")
+		return nil, fmt.Errorf("go modules disabled")
 	}
 
-	packages, modules, workspace, err := findPackages(ctx, root, testPaths)
+	packages, workspace, err := findPackages(ctx, root, testPaths, goWork, modules)
 	if err != nil {
 		return nil, err
 	}
@@ -96,12 +101,11 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 
 type addFile = func(fileName string)
 
-func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq2[*build.Package, error], *modules, *goWorkspace, error) {
-	modules := modules{}
+func findPackages(ctx context.Context, root string, includeTests, goWorkEnv bool, modules *modules) (iter.Seq2[*build.Package, error], *goWorkspace, error) {
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
 		log.Debug(ctx, "unable to find initial go.mod")
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
 	// Find the go.mod
@@ -117,14 +121,14 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 
 	// Find the go.work, if any and if its not disabled.
 	var goWork *goWorkspace
-	if os.Getenv("GOWORK") == "off" {
+	if !goWorkEnv {
 		log.Debug(ctx, "Go workspaces explicitly disabled")
 	} else {
 		goWork, err = modules.findGoWork(ctx, root)
-		if errors.Is(err, noGoWorkFound) {
+		if errors.Is(err, errNoGoWorkFound) {
 			log.Debug(ctx, "no go.work found above %s")
 		} else if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, err
 		} else {
 			// Apply replaces from go.work
 			for _, r := range goWork.file.Replace {
@@ -170,7 +174,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 	finder := packageFinder{
 		replaces:     _replaces,
 		includeTests: includeTests,
-		modules:      &modules,
+		modules:      modules,
 		cancel:       cancel,
 		dst:          incoming,
 	}
@@ -208,7 +212,7 @@ func findPackages(ctx context.Context, root string, includeTests bool) (iter.Seq
 				return
 			}
 		}
-	}, &modules, goWork, nil
+	}, goWork, nil
 }
 
 type packageFinder struct {
@@ -314,7 +318,7 @@ func (m *modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace
 		} else if os.IsNotExist(err) {
 			goWorkDir = filepath.Dir(goWorkDir)
 			if goWorkDir == string(filepath.Separator) || goWorkDir == "." {
-				return nil, noGoWorkFound
+				return nil, errNoGoWorkFound
 			}
 		} else {
 			return nil, err
@@ -341,7 +345,7 @@ func (m goWorkspace) addRootFiles(files map[string]struct{}) error {
 	return nil
 }
 
-var noGoWorkFound = errors.New("no go.work found")
+var errNoGoWorkFound = errors.New("no go.work found")
 
 func (m module) addRootFiles(files map[string]struct{}) error {
 	// Add go.{mod,sum}
