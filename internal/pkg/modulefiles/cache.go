@@ -70,7 +70,7 @@ func (c Cache) ModuleRoot() string { return c.modRoot }
 // Find the module root of a given package directory.
 //
 // FindModuleRoot does not share a cache, and should only be used to support connecting
-// to a deamon.
+// to a daemon.
 func FindModuleRoot(ctx context.Context, pkgRoot string) (string, error) {
 	var modules modules
 	goMod, err := modules.findGoMod(ctx, pkgRoot)

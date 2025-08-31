@@ -11,13 +11,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/iwahbe/helpmakego/internal/pkg/deamon"
+	"github.com/iwahbe/helpmakego/internal/pkg/daemon"
 	"github.com/iwahbe/helpmakego/internal/pkg/display"
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
-var useDeamon = isTruthy(os.Getenv("HELPMAKEGO_EXPIREMENT_DEAMON"))
+var useDaemon = isTruthy(os.Getenv("HELPMAKEGO_EXPIREMENT_DAEMON"))
 
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
@@ -32,8 +32,8 @@ func Root() *cobra.Command {
 	absolutePaths := cmd.Flags().Bool("abs", false, "output absolute paths instead of relative paths")
 	includeMod := cmd.Flags().Bool("mod", true, "include module files in the result")
 
-	isDeamon := cmd.Flags().Bool("x-deamon", false, "do not run the normal process, run as a deamon")
-	cmd.Flag("x-deamon").Hidden = true
+	isDaemon := cmd.Flags().Bool("x-daemon", false, "do not run the normal process, run as a daemon")
+	cmd.Flag("x-daemon").Hidden = true
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
@@ -76,13 +76,13 @@ func Root() *cobra.Command {
 
 		// This should only be set by another invocation of helpmakego, and is not
 		// designed to be called by users.
-		if *isDeamon {
-			return deamon.Serve(ctx, pkgPath)
+		if *isDaemon {
+			return daemon.Serve(ctx, pkgPath)
 		}
 
 		find := modulefiles.Find
-		if useDeamon {
-			find = deamon.Find
+		if useDaemon {
+			find = daemon.Find
 		}
 
 		paths, err := find(ctx, pkgPath, *includeTest, *includeMod, os.Getenv("GOWORK") != "off")

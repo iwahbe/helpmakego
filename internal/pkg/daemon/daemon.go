@@ -1,4 +1,4 @@
-package deamon
+package daemon
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
-// Serve a deamon to maintain the cache in the background.
+// Serve a daemon to maintain the cache in the background.
 //
 // It lives for 5 seconds.
 func Serve(ctx context.Context, pkgRoot string) error {
@@ -71,17 +71,17 @@ func Serve(ctx context.Context, pkgRoot string) error {
 }
 
 func start(ctx context.Context, moduleRoot string) {
-	cmd := exec.CommandContext(context.WithoutCancel(ctx), os.Args[0], "--x-deamon", moduleRoot)
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), os.Args[0], "--x-daemon", moduleRoot)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 		Pgid:    0,
 	}
 	if err := cmd.Start(); err != nil {
-		log.Warn(ctx, fmt.Sprintf("failed to start deamon: %s", err))
+		log.Warn(ctx, fmt.Sprintf("failed to start daemon: %s", err))
 		return
 	}
 	if err := cmd.Process.Release(); err != nil {
-		log.Warn(ctx, fmt.Sprintf("failed to release deamon: %s", err))
+		log.Warn(ctx, fmt.Sprintf("failed to release daemon: %s", err))
 	}
 }
 
@@ -90,8 +90,8 @@ func socketPath(moduleRoot string) string {
 	return "/tmp/helpmakego-" + encoded + ".sock"
 }
 
-// Find delegates a find call to the running deamon, or it executes the call locally and
-// while starting the deamon.
+// Find delegates a find call to the running daemon, or it executes the call locally and
+// while starting the daemon.
 func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork bool) ([]string, error) {
 	moduleRoot, err := modulefiles.FindModuleRoot(ctx, pkgRoot)
 	if err != nil {
@@ -104,18 +104,18 @@ func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork 
 	case err == nil:
 		log.Info(ctx, "connected to existing server")
 	case strings.Contains(err.Error(), "connection refused"):
-		log.Info(ctx, "restarting deamon at %s", socketPath)
+		log.Info(ctx, "restarting daemon at %s", socketPath)
 		_ = os.Remove(socketPath)
 		fallthrough
 	case errors.Is(err, os.ErrNotExist):
-		go start(ctx, moduleRoot) // Start the deamon in the background for the next invocation
-		log.Info(ctx, "starting deamon for next run")
+		go start(ctx, moduleRoot) // Start the daemon in the background for the next invocation
+		log.Info(ctx, "starting daemon for next run")
 		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
 	case errors.Is(err, os.ErrPermission):
-		log.Warn(ctx, "permission denied to start deamon", log.Attr("error", err.Error()))
+		log.Warn(ctx, "permission denied to start daemon", log.Attr("error", err.Error()))
 		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
 	default:
-		return nil, fmt.Errorf("unexpected dial error for find deamon: %w", err)
+		return nil, fmt.Errorf("unexpected dial error for find daemon: %w", err)
 	}
 
 	enc := json.NewEncoder(conn)
