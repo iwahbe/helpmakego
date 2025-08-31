@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -18,17 +17,17 @@ import (
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
+const serverTimeout time.Duration = time.Second * 5
+
 // Serve a daemon to maintain the cache in the background.
-//
-// It lives for 5 seconds.
 func Serve(ctx context.Context, pkgRoot string) error {
 	cache, err := modulefiles.NewCache(ctx, pkgRoot)
 	if err != nil {
 		return err
 	}
 	path := socketPath(cache.ModuleRoot())
-	err = os.Remove(path)
-	if !errors.Is(err, os.ErrNotExist) {
+
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
@@ -38,9 +37,8 @@ func Serve(ctx context.Context, pkgRoot string) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	// setDeadline gives a 5 second grace period for waiting for the next connection.
 	setDeadline := func() error {
-		if err := listener.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := listener.(*net.UnixListener).SetDeadline(time.Now().Add(serverTimeout)); err != nil {
 			return fmt.Errorf("failed set listener deadline: %w", err)
 		}
 		return nil
@@ -53,7 +51,7 @@ func Serve(ctx context.Context, pkgRoot string) error {
 	var wg sync.WaitGroup
 	for {
 		conn, err := listener.Accept()
-		if t, ok := err.(interface{ Timeout() bool }); ok && t.Timeout() {
+		if t, ok := err.(net.Error); ok && t.Timeout() {
 			wg.Wait() // Allow ongoing connections to exit
 			return nil
 		} else if err != nil {
@@ -103,7 +101,7 @@ func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork 
 	switch {
 	case err == nil:
 		log.Info(ctx, "connected to existing server")
-	case strings.Contains(err.Error(), "connection refused"):
+	case errors.Is(err, syscall.ECONNREFUSED):
 		log.Info(ctx, "restarting daemon at %s", socketPath)
 		_ = os.Remove(socketPath)
 		fallthrough
