@@ -32,15 +32,15 @@ func Serve(ctx context.Context, pkgRoot string) error {
 		return err
 	}
 
-	listner, err := net.Listen("unix", path)
+	listener, err := net.Listen("unix", path)
 	if err != nil {
 		return fmt.Errorf("failed to bind: %w", err)
 	}
-	defer func() { _ = listner.Close() }()
+	defer func() { _ = listener.Close() }()
 
 	// setDeadline gives a 5 second grace period for waiting for the next connection.
 	setDeadline := func() error {
-		if err := listner.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		if err := listener.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 			return fmt.Errorf("failed set listener deadline: %w", err)
 		}
 		return nil
@@ -52,7 +52,7 @@ func Serve(ctx context.Context, pkgRoot string) error {
 
 	var wg sync.WaitGroup
 	for {
-		conn, err := listner.Accept()
+		conn, err := listener.Accept()
 		if t, ok := err.(interface{ Timeout() bool }); ok && t.Timeout() {
 			wg.Wait() // Allow ongoing connections to exit
 			return nil
