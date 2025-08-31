@@ -102,7 +102,7 @@ func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork 
 	case err == nil:
 		log.Info(ctx, "connected to existing server")
 	case errors.Is(err, syscall.ECONNREFUSED):
-		log.Info(ctx, "restarting daemon at %s", socketPath)
+		log.Info(ctx, "restarting daemon")
 		_ = os.Remove(socketPath)
 		fallthrough
 	case errors.Is(err, os.ErrNotExist):

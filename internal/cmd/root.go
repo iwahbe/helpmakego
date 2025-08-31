@@ -17,7 +17,7 @@ import (
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
-var useDaemon = isTruthy(os.Getenv("HELPMAKEGO_EXPIREMENT_DAEMON"))
+var useDaemon = isTruthy(os.Getenv("HELPMAKEGO_EXPERIMENT_DAEMON"))
 
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
