@@ -19,11 +19,17 @@ import (
 
 // Find the set of files that are depended on by the package at root.
 func Find(ctx context.Context, root string, testPaths, modFiles, goWork bool) ([]string, error) {
-	return findWithModules(ctx, root, testPaths, modFiles, goWork, new(modules))
+	return findWithModules(ctx, root, testPaths, modFiles, goWork, new(modules), &build.Default)
 }
 
 // Find the set of files that are depended on by the package at root.
-func findWithModules(ctx context.Context, root string, testPaths, modFiles, goWork bool, modules *modules) ([]string, error) {
+func findWithModules(
+	ctx context.Context, root string,
+	testPaths, modFiles, goWork bool,
+	modules *modules, importer interface {
+		ImportDir(string, build.ImportMode) (*build.Package, error)
+	},
+) ([]string, error) {
 	var errs []error
 
 	files := map[string]struct{}{}
@@ -31,7 +37,7 @@ func findWithModules(ctx context.Context, root string, testPaths, modFiles, goWo
 		return nil, fmt.Errorf("go modules disabled")
 	}
 
-	packages, workspace, err := findPackages(ctx, root, testPaths, goWork, modules)
+	packages, workspace, err := findPackages(ctx, root, testPaths, goWork, modules, importer)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +107,13 @@ func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, a
 
 type addFile = func(fileName string)
 
-func findPackages(ctx context.Context, root string, includeTests, goWorkEnv bool, modules *modules) (iter.Seq2[*build.Package, error], *goWorkspace, error) {
+func findPackages(
+	ctx context.Context, root string,
+	includeTests, goWorkEnv bool,
+	modules *modules, importer interface {
+		ImportDir(string, build.ImportMode) (*build.Package, error)
+	},
+) (iter.Seq2[*build.Package, error], *goWorkspace, error) {
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
 		log.Debug(ctx, "unable to find initial go.mod")
@@ -175,6 +187,7 @@ func findPackages(ctx context.Context, root string, includeTests, goWorkEnv bool
 		replaces:     _replaces,
 		includeTests: includeTests,
 		modules:      modules,
+		importer:     importer,
 		cancel:       cancel,
 		dst:          incoming,
 	}
@@ -222,6 +235,10 @@ type packageFinder struct {
 	// pick up the correct module first.
 	replaces     []replace
 	includeTests bool
+
+	importer interface {
+		ImportDir(string, build.ImportMode) (*build.Package, error)
+	}
 
 	// Local state, may mutate and thus must be safe to mutate in parallel.
 
@@ -376,7 +393,7 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 		return
 	}
 
-	pkg, err := build.Default.ImportDir(target, 0)
+	pkg, err := pf.importer.ImportDir(target, 0)
 	if err != nil {
 		if _, err := os.Stat(target); os.IsNotExist(err) {
 			pf.cancel(fmt.Errorf("referenced package %q was not found: expected to be at %q", pkgName, target))
