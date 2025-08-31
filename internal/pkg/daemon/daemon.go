@@ -60,6 +60,7 @@ func Serve(ctx context.Context, pkgRoot string) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() { _ = conn.Close() }()
 			handle(ctx, cache, conn)
 		}()
 		if err := setDeadline(); err != nil {
