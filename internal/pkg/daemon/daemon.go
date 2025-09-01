@@ -2,7 +2,8 @@ package daemon
 
 import (
 	"context"
-	"encoding/base64"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,8 @@ func start(ctx context.Context, moduleRoot string) {
 }
 
 func socketPath(moduleRoot string) string {
-	encoded := base64.StdEncoding.EncodeToString([]byte(moduleRoot))
+	hash := sha256.Sum256([]byte(moduleRoot))
+	encoded := hex.EncodeToString(hash[:])[:32] // Take first 32 chars of hex
 	return "/tmp/helpmakego-" + encoded + ".sock"
 }
 
