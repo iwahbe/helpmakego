@@ -293,10 +293,11 @@ func (m *modules) findGoMod(ctx context.Context, root string) (mod module, err e
 			goModBytes = b
 			break
 		} else if os.IsNotExist(err) {
-			goModDir = filepath.Dir(goModDir)
-			if goModDir == string(filepath.Separator) || goModDir == "." {
+			parent := filepath.Dir(goModDir)
+			if parent == goModDir {
 				return module{}, errors.New("no go.mod file found")
 			}
+			goModDir = parent
 		} else {
 			return module{}, err
 		}
@@ -333,10 +334,11 @@ func (m *modules) findGoWork(ctx context.Context, root string) (mod *goWorkspace
 			goWorkBytes = b
 			break
 		} else if os.IsNotExist(err) {
-			goWorkDir = filepath.Dir(goWorkDir)
-			if goWorkDir == string(filepath.Separator) || goWorkDir == "." {
+			parent := filepath.Dir(goWorkDir)
+			if parent == goWorkDir {
 				return nil, errNoGoWorkFound
 			}
+			goWorkDir = parent
 		} else {
 			return nil, err
 		}
