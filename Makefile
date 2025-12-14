@@ -2,7 +2,7 @@
 build: bin/helpmakego
 
 # We don't want to do this, but we don't want to depend on helpmakego to build helpmakego
-bin/helpmakego: $(shell find . -name '*.go') go.mod go.sum
+bin/helpmakego: $(shell go list -f "{{range .GoFiles}}{{$$.Dir}}/{{.}} {{end}}" .) go.mod go.sum
 	mkdir -p bin
 	go build -o $@
 
