@@ -17,7 +17,10 @@ import (
 	"github.com/iwahbe/helpmakego/internal/pkg/modulefiles"
 )
 
-var useDaemon = isTruthy(os.Getenv("HELPMAKEGO_EXPERIMENT_DAEMON"))
+var useDaemon = func() bool {
+	envVar := os.Getenv("HELPMAKEGO_DAEMON")
+	return !(strings.EqualFold(envVar, "false") || envVar == "0")
+}()
 
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
@@ -108,5 +111,3 @@ func Root() *cobra.Command {
 
 	return cmd
 }
-
-func isTruthy(s string) bool { return strings.EqualFold(s, "true") || s == "1" }
