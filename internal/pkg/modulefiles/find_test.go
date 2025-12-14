@@ -83,10 +83,10 @@ use ./pkg2
 			"go.work.sum": ``,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
-			"pkg2/go.mod",
-			"pkg2/pkg.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
+			filepath.Join("pkg2", "go.mod"),
+			filepath.Join("pkg2", "pkg.go"),
 			"go.work",
 			"go.work.sum",
 		},
@@ -140,8 +140,8 @@ use ./pkg
 			"go.work.sum": ``,
 		},
 		expected: []string{
-			"pkg/go.mod",
-			"pkg/main.go",
+			filepath.Join("pkg", "go.mod"),
+			filepath.Join("pkg", "main.go"),
 			"go.work",
 			"go.work.sum",
 		},
@@ -189,10 +189,10 @@ use ./a/b
 			"go.work.sum": ``,
 		},
 		expected: []string{
-			"a/go.mod",
-			"a/main.go",
-			"a/b/go.mod",
-			"a/b/b.go",
+			filepath.Join("a", "go.mod"),
+			filepath.Join("a", "main.go"),
+			filepath.Join("a", "b", "go.mod"),
+			filepath.Join("a", "b", "b.go"),
 			"go.work",
 			"go.work.sum",
 		},
@@ -234,10 +234,10 @@ func Message() string {
 `,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
-			"pkg1/pkg2/go.mod",
-			"pkg1/pkg2/pkg.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
+			filepath.Join("pkg1", "pkg2", "go.mod"),
+			filepath.Join("pkg1", "pkg2", "pkg.go"),
 		},
 	})
 }
@@ -308,7 +308,7 @@ func Message() string {
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"pkg/pkg.go",
+			filepath.Join("pkg", "pkg.go"),
 		},
 	})
 }
@@ -350,7 +350,7 @@ func TestMessage(t *testing.T) string {
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"pkg/pkg.go",
+			filepath.Join("pkg", "pkg.go"),
 		},
 	})
 }
@@ -392,8 +392,8 @@ func TestMessage(t *testing.T) string {
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"pkg/pkg.go",
-			"pkg/pkg_test.go",
+			filepath.Join("pkg", "pkg.go"),
+			filepath.Join("pkg", "pkg_test.go"),
 		},
 	})
 }
@@ -430,7 +430,7 @@ func Message() string {
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"pkg1/pkg.go",
+			filepath.Join("pkg1", "pkg.go"),
 		},
 	})
 }
@@ -468,10 +468,10 @@ func Message() string {
 `,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
-			"pkg2/go.mod",
-			"pkg2/pkg.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
+			filepath.Join("pkg2", "go.mod"),
+			filepath.Join("pkg2", "pkg.go"),
 		},
 	})
 }
@@ -518,8 +518,8 @@ func MoreUtility() string {r eturn "This is another utility function." }
 			"main.go",
 			"util.go",
 			"helper.go",
-			"utility/utils.go",
-			"utility/moreutils.go",
+			filepath.Join("utility", "utils.go"),
+			filepath.Join("utility", "moreutils.go"),
 		},
 	})
 }
@@ -554,7 +554,7 @@ func Message() string {
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"pkg/pkg.go",
+			filepath.Join("pkg", "pkg.go"),
 		},
 	})
 }
@@ -587,7 +587,7 @@ func Message() string {n
 		expected: []string{
 			"go.mod",
 			"main.go",
-			"localpkg/pkg.go",
+			filepath.Join("localpkg", "pkg.go"),
 		},
 	})
 }
@@ -646,12 +646,12 @@ use ./module_c
 			"go.work.sum": ``,
 		},
 		expected: []string{
-			"module_a/go.mod",
-			"module_a/main.go",
-			"module_b/go.mod",
-			"module_b/b.go",
-			"module_c/go.mod",
-			"module_c/c.go",
+			filepath.Join("module_a", "go.mod"),
+			filepath.Join("module_a", "main.go"),
+			filepath.Join("module_b", "go.mod"),
+			filepath.Join("module_b", "b.go"),
+			filepath.Join("module_c", "go.mod"),
+			filepath.Join("module_c", "c.go"),
 			"go.work",
 			"go.work.sum",
 		},
@@ -699,12 +699,12 @@ func Message() string {}
 `,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
-			"pkg2/go.mod",
-			"pkg2/pkg.go",
-			"pkg2nested/go.mod",
-			"pkg2nested/pkg.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
+			filepath.Join("pkg2", "go.mod"),
+			filepath.Join("pkg2", "pkg.go"),
+			filepath.Join("pkg2nested", "go.mod"),
+			filepath.Join("pkg2nested", "pkg.go"),
 		},
 	})
 }
@@ -731,8 +731,8 @@ func main() { pkg1nested.Message(); pkg2nested.Message() }
 `,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
 		},
 	})
 }
@@ -780,12 +780,12 @@ func Message() string {}
 `,
 		},
 		expected: []string{
-			"pkg1/go.mod",
-			"pkg1/main.go",
-			"pkg2/go.mod",
-			"pkg2/pkg.go",
-			"pkg2nested/go.mod",
-			"pkg2nested/pkg.go",
+			filepath.Join("pkg1", "go.mod"),
+			filepath.Join("pkg1", "main.go"),
+			filepath.Join("pkg2", "go.mod"),
+			filepath.Join("pkg2", "pkg.go"),
+			filepath.Join("pkg2nested", "go.mod"),
+			filepath.Join("pkg2nested", "pkg.go"),
 		},
 	})
 }
