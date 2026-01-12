@@ -58,8 +58,11 @@ func expandEmbed(ctx context.Context, dir fs.FS, embed string, addFile addFile) 
 		}
 		s, err := f.Stat()
 		if err != nil {
-			errs = append(errs, fmt.Errorf("could not get FS info on %q: %w", match, err))
+			errs = append(errs, fmt.Errorf("could not get FS info on %q: %w", match, err), f.Close())
 			continue
+		}
+		if err := f.Close(); err != nil {
+			errs = append(errs, err)
 		}
 		if s.IsDir() {
 			errs = append(errs, embedDir(ctx, dir, match, addFile))
