@@ -25,27 +25,16 @@ func NewCache(ctx context.Context, pkgRoot string) (Cache, error) {
 type cachedImporter struct{ packages *sync.Map }
 
 func (c cachedImporter) ImportDir(dir string, mode build.ImportMode) (*build.Package, error) {
-	type (
-		key struct {
-			dir  string
-			mode build.ImportMode
-		}
-		value struct {
-			pkg *build.Package
-			err error
-		}
-	)
-
-	k := key{dir, mode}
-	v, ok := c.packages.Load(k)
-	if !ok {
-		pkg, err := build.Default.ImportDir(dir, mode)
-		v, _ = c.packages.LoadOrStore(k, value{pkg, err})
+	type key struct {
+		dir  string
+		mode build.ImportMode
 	}
 
-	val := v.(value)
-	return val.pkg, val.err
-
+	k := key{dir, mode}
+	v, _ := c.packages.LoadOrStore(k, sync.OnceValues(func() (*build.Package, error) {
+		return build.Default.ImportDir(dir, mode)
+	}))
+	return v.(func() (*build.Package, error))()
 }
 
 func (c Cache) getModules(key lookupKey) *modules {
