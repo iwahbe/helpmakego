@@ -12,7 +12,7 @@ lint:
 
 .PHONY: test
 test:
-	go test -race -count 1 -v ./...
+	go test -race -coverprofile=coverage.txt -count 1 -v ./...
 
 .PHONY: benchmark
 benchmark: bin/helpmakego tmp/helpmakego-main/bin/helpmakego \
