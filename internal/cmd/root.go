@@ -19,7 +19,7 @@ import (
 
 var useDaemon = func() bool {
 	envVar := os.Getenv("HELPMAKEGO_DAEMON")
-	return !(strings.EqualFold(envVar, "false") || envVar == "0")
+	return !strings.EqualFold(envVar, "false") && envVar != "0"
 }()
 
 func Root() *cobra.Command {
