@@ -20,6 +20,7 @@ type testFindArgs struct {
 
 	includeTestFiles bool
 	excludeModFiles  bool
+	emitPackages     bool
 }
 
 func testFind(t *testing.T, args testFindArgs) {
@@ -40,7 +41,12 @@ func testFind(t *testing.T, args testFindArgs) {
 	}
 
 	// Run the Find function
-	files, err := Find(ctx, path.Join(tmpDir, args.runDir), args.includeTestFiles, !args.excludeModFiles, true /* GOWORK != off */)
+	files, err := Find(ctx, path.Join(tmpDir, args.runDir), FindArgs{
+		TestPaths:    args.includeTestFiles,
+		ModFiles:     !args.excludeModFiles,
+		GoWork:       true, // GOWORK != off
+		EmitPackages: args.emitPackages,
+	})
 	if assert.NoError(t, err) {
 		assert.ElementsMatch(t, args.expected, display.Relative(ctx, tmpDir, files))
 	}
@@ -309,6 +315,44 @@ func Message() string {
 			"go.mod",
 			"main.go",
 			filepath.Join("pkg", "pkg.go"),
+		},
+	})
+}
+
+func TestFindEmitPackages(t *testing.T) {
+	t.Parallel()
+	testFind(t, testFindArgs{
+		emitPackages:    true,
+		excludeModFiles: true,
+		files: map[string]string{
+			"go.mod": `module example.com/testmod
+
+go 1.18
+`,
+			"main.go": `package main
+
+import (
+	"example.com/testmod/pkg"
+)
+
+func main() { pkg.Message() }
+`,
+			"pkg/pkg.go": `package pkg
+
+func Message() string {
+	return "Hello from pkg!"
+}
+`,
+			"pkg/helper.go": `package pkg
+
+func Helper() string {
+	return "helper"
+}
+`,
+		},
+		expected: []string{
+			".",
+			"pkg",
 		},
 	})
 }

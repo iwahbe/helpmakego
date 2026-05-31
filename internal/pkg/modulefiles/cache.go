@@ -46,12 +46,13 @@ func (c Cache) getModules(key lookupKey) *modules {
 	return k.(*modules)
 }
 
-func (c Cache) Find(ctx context.Context, pkg string, testPaths, modFiles, goWork bool) ([]string, error) {
-	return findWithModules(ctx, pkg, testPaths, modFiles, goWork, c.getModules(lookupKey{
-		test: testPaths,
-		mod:  modFiles,
-		work: goWork,
-	}), c.packages)
+func (c Cache) Find(ctx context.Context, pkg string, args FindArgs) ([]string, error) {
+	return findWithModules(ctx, pkg, args.TestPaths, args.ModFiles, args.GoWork, args.EmitPackages,
+		c.getModules(lookupKey{
+			test: args.TestPaths,
+			mod:  args.ModFiles,
+			work: args.GoWork,
+		}), c.packages)
 }
 
 func (c Cache) ModuleRoot() string { return c.modRoot }

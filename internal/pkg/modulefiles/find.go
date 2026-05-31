@@ -18,14 +18,28 @@ import (
 )
 
 // Find the set of files that are depended on by the package at root.
-func Find(ctx context.Context, root string, testPaths, modFiles, goWork bool) ([]string, error) {
-	return findWithModules(ctx, root, testPaths, modFiles, goWork, new(modules), &build.Default)
+func Find(ctx context.Context, root string, args FindArgs) ([]string, error) {
+	return findWithModules(ctx, root,
+		args.TestPaths, args.ModFiles, args.GoWork, args.EmitPackages,
+		new(modules), &build.Default)
+}
+
+type FindArgs struct {
+	// If test files & their dependents should be included
+	TestPaths bool
+	// If go.mod & go.sum files should be included
+	ModFiles bool
+	// If go.work & go.work.sum files should be included
+	GoWork bool
+	// If packages should be emitted instead of individual files
+	EmitPackages bool
 }
 
 // Find the set of files that are depended on by the package at root.
 func findWithModules(
 	ctx context.Context, root string,
-	testPaths, modFiles, goWork bool,
+	testPaths, modFiles, goWork,
+	packagesOnly bool,
 	modules *modules, importer interface {
 		ImportDir(string, build.ImportMode) (*build.Package, error)
 	},
@@ -49,7 +63,7 @@ func findWithModules(
 			continue
 		}
 
-		errs = append(errs, importPackage(ctx, pkg, testPaths, func(fileName string) {
+		errs = append(errs, importPackage(ctx, pkg, testPaths, packagesOnly, func(fileName string) {
 			files[filepath.Join(pkg.Dir, fileName)] = struct{}{}
 		}))
 	}
@@ -72,8 +86,12 @@ func findWithModules(
 	return sortedFiles, errors.Join(errs...)
 }
 
-func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, addFile addFile) error {
+func importPackage(ctx context.Context, pkg *build.Package, includeTests, packagesOnly bool, addFile addFile) error {
 	var errs []error
+	if packagesOnly {
+		addFile("")
+		return nil
+	}
 	errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.EmbedPatterns, addFile))
 	if includeTests {
 		// Include test files

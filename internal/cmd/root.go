@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,7 +25,7 @@ var useDaemon = func() bool {
 
 func Root() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:          "helpmakego [path-to-package] [--test] [--abs] [--mod]",
+		Use:          "helpmakego [path-to-package] [--test] [--abs] [--mod] [--packages]",
 		Short:        "Find all files a Go package depends on - suitable for Make",
 		SilenceUsage: true,
 		Args:         cobra.MaximumNArgs(1),
@@ -34,10 +35,21 @@ func Root() *cobra.Command {
 	outputJSON := cmd.Flags().Bool("json", false, "output source files as a a JSON array")
 	absolutePaths := cmd.Flags().Bool("abs", false, "output absolute paths instead of relative paths")
 	includeMod := cmd.Flags().Bool("mod", true, "include module files in the result")
+	packages := cmd.Flags().Bool("packages", false, "emit packages instead of files")
 
 	isDaemon := cmd.Flags().Bool("x-daemon", false, "do not run the normal process, run as a daemon")
 	cmd.Flag("x-daemon").Hidden = true
 
+	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+		if *packages {
+			if cmd.Flags().Changed("mod") && *includeMod {
+				return errors.New("--packages implies --mod=false")
+			}
+			*includeMod = false
+		}
+
+		return nil
+	}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
@@ -88,7 +100,12 @@ func Root() *cobra.Command {
 			find = daemon.Find
 		}
 
-		paths, err := find(ctx, pkgPath, *includeTest, *includeMod, os.Getenv("GOWORK") != "off")
+		paths, err := find(ctx, pkgPath, modulefiles.FindArgs{
+			TestPaths:    *includeTest,
+			ModFiles:     *includeMod,
+			GoWork:       os.Getenv("GOWORK") != "off",
+			EmitPackages: *packages,
+		})
 		if err != nil {
 			return err
 		}
