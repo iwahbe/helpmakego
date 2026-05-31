@@ -95,7 +95,7 @@ func socketPath(moduleRoot string) string {
 
 // Find delegates a find call to the running daemon, or it executes the call locally and
 // while starting the daemon.
-func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork bool) ([]string, error) {
+func Find(ctx context.Context, pkgRoot string, args modulefiles.FindArgs) ([]string, error) {
 	moduleRoot, err := modulefiles.FindModuleRoot(ctx, pkgRoot)
 	if err != nil {
 		return nil, err
@@ -113,10 +113,10 @@ func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork 
 	case errors.Is(err, os.ErrNotExist):
 		go start(ctx, moduleRoot) // Start the daemon in the background for the next invocation
 		log.Info(ctx, "starting daemon for next run")
-		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
+		return modulefiles.Find(ctx, pkgRoot, args)
 	case errors.Is(err, os.ErrPermission):
 		log.Warn(ctx, "permission denied to start daemon", log.Attr("error", err.Error()))
-		return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
+		return modulefiles.Find(ctx, pkgRoot, args)
 	default:
 		return nil, fmt.Errorf("unexpected dial error for find daemon: %w", err)
 	}
@@ -125,8 +125,10 @@ func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork 
 	enc.SetEscapeHTML(false)
 	err = enc.Encode(request{
 		PathToPackage: pkgRoot,
-		IncludeTest:   includeTests,
-		IncludeMod:    includeMod,
+		IncludeTest:   args.TestPaths,
+		IncludeMod:    args.ModFiles,
+		GoWork:        args.GoWork,
+		EmitPackages:  args.EmitPackages,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode request: %w", err)
@@ -160,7 +162,12 @@ func handle(ctx context.Context, cache modulefiles.Cache, conn net.Conn) {
 	}
 
 	// Execute find from the shared cache
-	files, err := cache.Find(ctx, req.PathToPackage, req.IncludeTest, req.IncludeMod, req.GoWork)
+	files, err := cache.Find(ctx, req.PathToPackage, modulefiles.FindArgs{
+		TestPaths:    req.IncludeTest,
+		ModFiles:     req.IncludeMod,
+		GoWork:       req.GoWork,
+		EmitPackages: req.EmitPackages,
+	})
 
 	// Write the response
 	enc := json.NewEncoder(conn)
@@ -183,6 +190,7 @@ type request struct {
 	IncludeTest   bool   `json:"includeTest"`
 	IncludeMod    bool   `json:"includeMod"`
 	GoWork        bool   `json:"goWork"`
+	EmitPackages  bool   `json:"emitPackages"`
 }
 
 type response struct {

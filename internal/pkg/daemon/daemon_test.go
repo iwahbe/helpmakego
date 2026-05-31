@@ -57,7 +57,10 @@ func TestDaemon(t *testing.T) {
 	require.True(t, socketExists, "daemon socket was not created: %s", socketPath)
 
 	// Test daemon.Find - should connect to running daemon
-	files, err := Find(ctx, tmpDir, false, true, true)
+	files, err := Find(ctx, tmpDir, modulefiles.FindArgs{
+		ModFiles: true,
+		GoWork:   true,
+	})
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 	assert.Equal(t, []string{

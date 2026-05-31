@@ -21,6 +21,6 @@ func Serve(ctx context.Context, pkgRoot string) error {
 	return errors.New("daemon is not supported on Windows")
 }
 
-func Find(ctx context.Context, pkgRoot string, includeTests, includeMod, goWork bool) ([]string, error) {
-	return modulefiles.Find(ctx, pkgRoot, includeTests, includeMod, goWork)
+func Find(ctx context.Context, pkgRoot string, args modulefiles.FindArgs) ([]string, error) {
+	return modulefiles.Find(ctx, pkgRoot, args)
 }
