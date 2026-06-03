@@ -129,6 +129,7 @@ func Find(ctx context.Context, pkgRoot string, args modulefiles.FindArgs) ([]str
 		IncludeMod:    args.ModFiles,
 		GoWork:        args.GoWork,
 		EmitPackages:  args.EmitPackages,
+		ChangedSince:  args.ChangedSince,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode request: %w", err)
@@ -167,6 +168,7 @@ func handle(ctx context.Context, cache modulefiles.Cache, conn net.Conn) {
 		ModFiles:     req.IncludeMod,
 		GoWork:       req.GoWork,
 		EmitPackages: req.EmitPackages,
+		ChangedSince: req.ChangedSince,
 	})
 
 	// Write the response
@@ -191,6 +193,7 @@ type request struct {
 	IncludeMod    bool   `json:"includeMod"`
 	GoWork        bool   `json:"goWork"`
 	EmitPackages  bool   `json:"emitPackages"`
+	ChangedSince  string `json:"changedSince"`
 }
 
 type response struct {

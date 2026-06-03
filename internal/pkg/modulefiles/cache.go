@@ -4,6 +4,8 @@ import (
 	"context"
 	"go/build"
 	"sync"
+
+	"github.com/iwahbe/helpmakego/internal/pkg/vcs"
 )
 
 type Cache struct {
@@ -47,7 +49,7 @@ func (c Cache) getModules(key lookupKey) *modules {
 }
 
 func (c Cache) Find(ctx context.Context, pkg string, args FindArgs) ([]string, error) {
-	return findWithModules(ctx, pkg, args.TestPaths, args.ModFiles, args.GoWork, args.EmitPackages,
+	return findWithModules(ctx, pkg, args, vcs.Discover,
 		c.getModules(lookupKey{
 			test: args.TestPaths,
 			mod:  args.ModFiles,
