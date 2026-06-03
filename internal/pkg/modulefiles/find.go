@@ -14,14 +14,13 @@ import (
 	"sync"
 
 	"github.com/iwahbe/helpmakego/internal/pkg/log"
+	"github.com/iwahbe/helpmakego/internal/pkg/vcs"
 	"golang.org/x/mod/modfile"
 )
 
 // Find the set of files that are depended on by the package at root.
 func Find(ctx context.Context, root string, args FindArgs) ([]string, error) {
-	return findWithModules(ctx, root,
-		args.TestPaths, args.ModFiles, args.GoWork, args.EmitPackages,
-		new(modules), &build.Default)
+	return findWithModules(ctx, root, args, vcs.Discover, new(modules), &build.Default)
 }
 
 type FindArgs struct {
@@ -33,28 +32,35 @@ type FindArgs struct {
 	GoWork bool
 	// If packages should be emitted instead of individual files
 	EmitPackages bool
+	// If emitted files/packages should be filtered to only those changed since the REF passed in
+	ChangedSince string
 }
 
 // Find the set of files that are depended on by the package at root.
 func findWithModules(
 	ctx context.Context, root string,
-	testPaths, modFiles, goWork,
-	packagesOnly bool,
+	args FindArgs,
+	discover discoverFunc,
 	modules *modules, importer interface {
 		ImportDir(string, build.ImportMode) (*build.Package, error)
 	},
 ) ([]string, error) {
 	var errs []error
 
-	files := map[string]struct{}{}
 	if os.Getenv("GO111MODULE") == "off" {
 		return nil, fmt.Errorf("go modules disabled")
 	}
 
-	packages, workspace, err := findPackages(ctx, root, testPaths, goWork, modules, importer)
+	packages, workspace, graph, err := findPackages(ctx, root, args.TestPaths, args.GoWork, modules, importer)
 	if err != nil {
 		return nil, err
 	}
+
+	// Collect every discovered package and the files it contributes. When we only
+	// emit package directories and are not filtering by change, the individual
+	// files are never needed, so collecting them is skipped.
+	collectFiles := args.ChangedSince != "" || !args.EmitPackages
+	pkgFiles := map[string]map[string]struct{}{}
 	for pkg, err := range packages {
 		if err != nil {
 			errs = append(errs, err)
@@ -62,20 +68,39 @@ func findWithModules(
 		if pkg == nil {
 			continue
 		}
-
-		errs = append(errs, importPackage(ctx, pkg, testPaths, packagesOnly, func(fileName string) {
-			files[filepath.Join(pkg.Dir, fileName)] = struct{}{}
+		if !collectFiles {
+			pkgFiles[pkg.Dir] = nil
+			continue
+		}
+		contributed := map[string]struct{}{}
+		errs = append(errs, importPackage(ctx, pkg, args.TestPaths, func(fileName string) {
+			contributed[filepath.Join(pkg.Dir, fileName)] = struct{}{}
 		}))
+		pkgFiles[pkg.Dir] = contributed
 	}
 
-	if modFiles {
-		(*sync.Map)(modules).Range(func(_, m any) bool {
-			errs = append(errs, m.(module).addRootFiles(files))
-			return true
-		})
-		if workspace != nil {
-			errs = append(errs, workspace.addRootFiles(files))
+	emit := make(map[string]struct{}, len(pkgFiles))
+	if args.ChangedSince == "" {
+		for dir := range pkgFiles {
+			emit[dir] = struct{}{}
 		}
+	} else if emit, err = affectedPackages(ctx, root, args.ChangedSince, discover, pkgFiles, graph, modules); err != nil {
+		return nil, err
+	}
+
+	files := map[string]struct{}{}
+	for dir := range emit {
+		if args.EmitPackages {
+			files[dir] = struct{}{}
+			continue
+		}
+		for file := range pkgFiles[dir] {
+			files[file] = struct{}{}
+		}
+	}
+
+	if args.ModFiles {
+		errs = append(errs, addModuleFiles(ctx, args.ChangedSince, emit, modules, workspace, files))
 	}
 
 	sortedFiles := make([]string, 0, len(files))
@@ -86,12 +111,49 @@ func findWithModules(
 	return sortedFiles, errors.Join(errs...)
 }
 
-func importPackage(ctx context.Context, pkg *build.Package, includeTests, packagesOnly bool, addFile addFile) error {
+// addModuleFiles adds the go.mod, go.sum, and workspace files that belong to the
+// emitted packages.
+//
+// Without a --changed-since filter every discovered module contributes its root
+// files. With the filter, only modules that own an emitted package do, so that a
+// module with no affected package is not surfaced.
+func addModuleFiles(
+	ctx context.Context, changedSince string, emit map[string]struct{},
+	modules *modules, workspace *goWorkspace, files map[string]struct{},
+) error {
 	var errs []error
-	if packagesOnly {
-		addFile("")
-		return nil
+	if changedSince == "" {
+		for _, m := range (*sync.Map)(modules).Range {
+			errs = append(errs, m.(module).addRootFiles(files))
+
+		}
+		if workspace != nil {
+			errs = append(errs, workspace.addRootFiles(files))
+		}
+		return errors.Join(errs...)
 	}
+
+	seen := map[string]struct{}{}
+	for dir := range emit {
+		mod, err := modules.findGoMod(ctx, dir)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if _, ok := seen[mod.rootDir]; ok {
+			continue
+		}
+		seen[mod.rootDir] = struct{}{}
+		errs = append(errs, mod.addRootFiles(files))
+	}
+	if workspace != nil && len(emit) > 0 {
+		errs = append(errs, workspace.addRootFiles(files))
+	}
+	return errors.Join(errs...)
+}
+
+func importPackage(ctx context.Context, pkg *build.Package, includeTests bool, addFile addFile) error {
+	var errs []error
 	errs = append(errs, expandEmbeds(ctx, os.DirFS(pkg.Dir), pkg.EmbedPatterns, addFile))
 	if includeTests {
 		// Include test files
@@ -131,11 +193,11 @@ func findPackages(
 	modules *modules, importer interface {
 		ImportDir(string, build.ImportMode) (*build.Package, error)
 	},
-) (iter.Seq2[*build.Package, error], *goWorkspace, error) {
+) (iter.Seq2[*build.Package, error], *goWorkspace, *importGraph, error) {
 	goMod, err := modules.findGoMod(ctx, root)
 	if err != nil {
 		log.Debug(ctx, "unable to find initial go.mod")
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Find the go.mod
@@ -158,7 +220,7 @@ func findPackages(
 		if errors.Is(err, errNoGoWorkFound) {
 			log.Debug(ctx, "no go.work found above %s")
 		} else if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		} else {
 			// Apply replaces from go.work
 			for _, r := range goWork.file.Replace {
@@ -201,6 +263,7 @@ func findPackages(
 		return strings.Compare(b.from, a.from)
 	})
 
+	graph := newImportGraph()
 	finder := packageFinder{
 		replaces:     _replaces,
 		includeTests: includeTests,
@@ -208,6 +271,7 @@ func findPackages(
 		importer:     importer,
 		cancel:       cancel,
 		dst:          incoming,
+		edges:        graph,
 	}
 
 	finder.wg.Add(1)
@@ -243,7 +307,7 @@ func findPackages(
 				return
 			}
 		}
-	}, goWork, nil
+	}, goWork, graph, nil
 }
 
 type packageFinder struct {
@@ -265,6 +329,9 @@ type packageFinder struct {
 
 	// seen is a cache of modules already processed.
 	seen sync.Map // Map of string -> struct{}
+
+	// edges records the import graph discovered while walking packages.
+	edges *importGraph
 
 	dst chan<- *build.Package
 
@@ -426,25 +493,21 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 	pf.dst <- pkg
 
 	searchImport := func(_import string) {
+		// Record the edge for every occurrence, even repeated or foreign imports,
+		// so the import graph is complete for reverse-dependency analysis.
+		dir, local := pf.resolve(goMod, _import)
+		pf.edges.add(target, _import, dir)
+
+		if !local {
+			log.Debug(ctx, "Skipping foreign import", log.Attr("module", _import))
+			return
+		}
 		if _, ok := pf.seen.LoadOrStore(_import, struct{}{}); ok {
 			log.Debug(ctx, "Skipping repeated import", log.Attr("module", _import))
 			return
 		}
-		rest, isInModule := moduleCovers(_import, goMod.file.Module.Mod.Path)
-		if !isInModule {
-			if replaceTarget, ok := pf.fromReplace(_import); ok {
-				log.Debug(ctx, "Replacing import",
-					log.Attr("from", _import), log.Attr("to", replaceTarget))
-				pf.wg.Add(1)
-				go pf.findPackages(ctx, replaceTarget, _import)
-				return
-			} else {
-				log.Debug(ctx, "Skipping foreign import", log.Attr("module", _import))
-				return
-			}
-		}
 		pf.wg.Add(1)
-		go pf.findPackages(ctx, filepath.Join(goMod.rootDir, rest), _import)
+		go pf.findPackages(ctx, dir, _import)
 	}
 
 	log.Debug(ctx, "finding transitive imports",
@@ -471,6 +534,20 @@ func (pf *packageFinder) findPackages(ctx context.Context, target string, pkgNam
 			searchImport(_import)
 		}
 	}
+}
+
+// resolve maps an import path to the local directory that provides it.
+//
+// It returns the directory and true when the import is part of goMod's module or
+// is satisfied by a local replace, and ("", false) for foreign imports.
+func (pf *packageFinder) resolve(goMod module, _import string) (string, bool) {
+	if rest, ok := moduleCovers(_import, goMod.file.Module.Mod.Path); ok {
+		return filepath.Join(goMod.rootDir, rest), true
+	}
+	if replaceTarget, ok := pf.fromReplace(_import); ok {
+		return replaceTarget, true
+	}
+	return "", false
 }
 
 func (pf *packageFinder) fromReplace(_import string) (string, bool) {
